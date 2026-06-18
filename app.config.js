@@ -14,7 +14,7 @@ module.exports = () => {
       slug: EXPO_ANIMA_BRAND.slug,
       platforms: ["ios", "android"],
       scheme: selectedVariant.scheme,
-      version: "1.1.8",
+      version: "1.1.9",
       jsEngine: "hermes",
       orientation: "portrait",
       icon: "./assets/icon-padded.png",
@@ -29,7 +29,7 @@ module.exports = () => {
         icon: "./assets/icon-padded.png",
         supportsTablet: false,
         bundleIdentifier: selectedVariant.iosBundleId,
-        buildNumber: "10",
+        buildNumber: "11",
         infoPlist: {
           NSLocationWhenInUseUsageDescription: "Necesitamos tu ubicacion para validar el check-in.",
           ITSAppUsesNonExemptEncryption: false
@@ -37,7 +37,7 @@ module.exports = () => {
       },
       android: {
         package: selectedVariant.androidPackage,
-        versionCode: 14,
+        versionCode: 15,
         adaptiveIcon: {
           foregroundImage: "./assets/adaptive-icon-padded.png",
           backgroundColor: "#F7F5F8"

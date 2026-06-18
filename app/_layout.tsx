@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react"
 import { Stack } from "expo-router"
 import { StatusBar } from "expo-status-bar"
 import Constants from "expo-constants"
+import * as Notifications from "expo-notifications"
 import { View, Text, StyleSheet, TouchableOpacity } from "react-native"
 import { GestureHandlerRootView } from "react-native-gesture-handler"
 import { SafeAreaProvider } from "react-native-safe-area-context"
@@ -15,6 +16,16 @@ import { AppUpdateGate } from "@/components/AppUpdateGate"
 import { useAppUpdatePolicy } from "@/hooks/use-app-update-policy"
 import { reportError } from "@/lib/monitoring"
 import { getAnimaAppUpdateKey } from "@/brand/anima/config/runtime"
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+})
 
 type LayoutErrorBoundaryProps = {
   error: Error

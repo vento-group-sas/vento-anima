@@ -142,6 +142,22 @@ export function useTeamEditing({
     [canViewAllSites],
   );
 
+  const syncEmployeeSelectedSite = useCallback(
+    async (employeeId: string, siteId: string) => {
+      const { error } = await supabase.from("employee_settings").upsert(
+        {
+          employee_id: employeeId,
+          selected_site_id: siteId,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "employee_id" },
+      );
+
+      if (error) throw error;
+    },
+    [],
+  );
+
   const startEdit = useCallback(
     async (item: EmployeeRow) => {
       if (!canManageTeam) return;
@@ -272,6 +288,8 @@ export function useTeamEditing({
         await saveEmployeeSites(editingEmployee.id, form.siteIds, primarySiteId);
       }
 
+      await syncEmployeeSelectedSite(editingEmployee.id, primarySiteId);
+
       await loadEmployees();
       closeEdit();
     } catch (err) {
@@ -289,6 +307,7 @@ export function useTeamEditing({
     loadEmployees,
     managerSiteId,
     saveEmployeeSites,
+    syncEmployeeSelectedSite,
     userId,
   ]);
 

@@ -283,7 +283,7 @@ export type PendingBreakEvent = {
 };
 
 export const ATTENDANCE_GEOFENCE = {
-  checkIn: { maxAccuracyMeters: 20 },
+  checkIn: { maxAccuracyMeters: 25 },
   checkOut: { maxAccuracyMeters: 25 },
 };
 
@@ -293,7 +293,7 @@ export const SHIFT_DEPARTURE_TRACKING = {
   minCheckIntervalMs: 45000,
 };
 
-export const GEOFENCE_READY_CACHE_MS = 45000;
+export const GEOFENCE_READY_CACHE_MS = 120000;
 export const SITE_RESOLVE_CACHE_MS = 5 * 60 * 1000;
 export const ATTENDANCE_WRITE_MAX_ATTEMPTS = 3;
 export const ATTENDANCE_WRITE_BASE_DELAY_MS = 700;

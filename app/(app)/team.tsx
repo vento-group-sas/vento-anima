@@ -61,6 +61,7 @@ export default function TeamScreen() {
 
   const [search, setSearch] = useState("");
   const [siteFilterId, setSiteFilterId] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<"active" | "inactive">("active");
   const [activePicker, setActivePicker] = useState<
     "editRole" | "editPrimary" | "editSites" | "inviteRole" | "inviteSite" | null
   >(null);
@@ -200,12 +201,21 @@ export default function TeamScreen() {
     const query = search.trim().toLowerCase();
     return employees.filter((item) => {
       if (siteFilterId && item.site_id !== siteFilterId) return false;
+      const isActive = item.is_active !== false;
+      if (statusFilter === "active" && !isActive) return false;
+      if (statusFilter === "inactive" && isActive) return false;
       if (!query) return true;
       const name = `${item.full_name ?? ""} ${item.alias ?? ""}`.toLowerCase();
       const roleName = roleLabel(item.role).toLowerCase();
       return name.includes(query) || roleName.includes(query);
     });
-  }, [employees, search, siteFilterId, roleLabel]);
+  }, [employees, search, siteFilterId, statusFilter, roleLabel]);
+
+  const activeEmployeeCount = useMemo(
+    () => employees.filter((item) => item.is_active !== false).length,
+    [employees],
+  );
+  const inactiveEmployeeCount = employees.length - activeEmployeeCount;
 
   const openPicker = (
     picker:
@@ -478,6 +488,33 @@ export default function TeamScreen() {
           </View>
         ) : null}
 
+        <View style={styles.statusTabs}>
+          {[
+            { key: "active" as const, label: "Activos", count: activeEmployeeCount },
+            { key: "inactive" as const, label: "Inactivos", count: inactiveEmployeeCount },
+          ].map((option) => {
+            const active = statusFilter === option.key;
+            return (
+              <TouchableOpacity
+                key={option.key}
+                onPress={() => setStatusFilter(option.key)}
+                style={[
+                  UI.chip,
+                  styles.statusTab,
+                  active ? styles.statusTabActive : null,
+                ]}
+              >
+                <Text style={[styles.statusTabText, active ? styles.statusTabTextActive : null]}>
+                  {option.label}
+                </Text>
+                <Text style={[styles.statusTabCount, active ? styles.statusTabTextActive : null]}>
+                  {option.count}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
         {isLoading ? (
           <View style={{ paddingTop: 30, alignItems: "center" }}>
             <ActivityIndicator color={COLORS.accent} />
@@ -624,5 +661,36 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
     padding: 12,
     color: COLORS.text,
+  },
+  statusTabs: {
+    marginTop: 12,
+    flexDirection: "row",
+    gap: 10,
+  },
+  statusTab: {
+    flex: 1,
+    minHeight: 44,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.white,
+  },
+  statusTabActive: {
+    borderColor: COLORS.accent,
+    backgroundColor: "rgba(226, 0, 106, 0.10)",
+  },
+  statusTabText: {
+    fontWeight: "800",
+    color: COLORS.text,
+  },
+  statusTabTextActive: {
+    color: COLORS.accent,
+  },
+  statusTabCount: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: COLORS.neutral,
   },
 });

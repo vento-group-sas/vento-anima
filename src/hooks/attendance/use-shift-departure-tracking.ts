@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useRef } from "react";
 
 import * as Haptics from "expo-haptics";
-import { Alert } from "react-native";
+import * as Notifications from "expo-notifications";
+import { Alert, Platform } from "react-native";
 
 import type { SiteCoordinates, ValidatedLocation } from "@/lib/geolocation";
 import { calculateDistance } from "@/lib/geolocation";
 import { supabase } from "@/lib/supabase";
+
+const SHIFT_NOTIFICATION_CHANNEL = "shift-alerts";
 
 type LastAttendanceLog = {
   action: "check_in" | "check_out";
@@ -29,6 +32,35 @@ type UseShiftDepartureTrackingArgs = {
   loadTodayAttendance: () => Promise<unknown> | unknown;
   getAttendanceSource: () => string;
 };
+
+async function ensureShiftNotificationChannel() {
+  if (Platform.OS !== "android") return;
+  await Notifications.setNotificationChannelAsync(SHIFT_NOTIFICATION_CHANNEL, {
+    name: "Alertas de turno",
+    importance: Notifications.AndroidImportance.HIGH,
+    vibrationPattern: [0, 250, 250, 250],
+  });
+}
+
+async function notifyAutomaticCheckout(siteName: string | null) {
+  const permission = await Notifications.getPermissionsAsync();
+  if (permission.status !== "granted") return;
+
+  await ensureShiftNotificationChannel();
+  await Notifications.scheduleNotificationAsync({
+    content: {
+      title: "Turno cerrado automáticamente",
+      body: siteName
+        ? `Detectamos que te alejaste de ${siteName}. Registramos tu salida automática.`
+        : "Detectamos que te alejaste de la sede. Registramos tu salida automática.",
+      sound: true,
+      data: {
+        type: "shift_auto_checkout",
+      },
+    },
+    trigger: null,
+  });
+}
 
 export function useShiftDepartureTracking({
   userId,
@@ -167,6 +199,7 @@ export function useShiftDepartureTracking({
             void Haptics.notificationAsync(
               Haptics.NotificationFeedbackType.Warning,
             );
+            void notifyAutomaticCheckout(lastLog.site_name);
             Alert.alert(
               "Turno cerrado automáticamente",
               "Detectamos que te alejaste de la sede durante un turno activo. Se registró salida automática.",

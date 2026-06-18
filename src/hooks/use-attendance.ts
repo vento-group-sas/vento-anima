@@ -1340,8 +1340,10 @@ export function useAttendance() {
           if (!location) {
             const locationResult = await getValidatedLocation({
               maxAccuracyMeters: policy.maxAccuracyMeters,
-              samples: mode === "check_out" ? 2 : 4,
-              timeoutMs: mode === "check_out" ? 10000 : 20000,
+              samples: mode === "check_out" ? 2 : 3,
+              timeoutMs: mode === "check_out" ? 8000 : 12000,
+              allowRecentLocation: true,
+              recentLocationMaxAgeMs: 120000,
             })
             if (!locationResult.success || !locationResult.location) {
               recordDiagnosticError(
@@ -1955,9 +1957,22 @@ export function useAttendance() {
     if (syncingAnyCount > 0) return "syncing"
     if (failedAnyCount > 0) return "failed"
     if (pendingAnyCount > 0) return "queued"
-    if (geofenceState.status === "blocked" || geofenceState.status === "error") return "blocked"
+    if (
+      geofenceState.status !== "ready" ||
+      !geofenceState.canProceed ||
+      geofenceState.requiresSelection
+    ) {
+      return "blocked"
+    }
     return "ready"
-  }, [failedAnyCount, geofenceState.status, pendingAnyCount, syncingAnyCount])
+  }, [
+    failedAnyCount,
+    geofenceState.canProceed,
+    geofenceState.requiresSelection,
+    geofenceState.status,
+    pendingAnyCount,
+    syncingAnyCount,
+  ])
 
   return {
     attendanceState,

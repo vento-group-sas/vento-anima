@@ -202,17 +202,14 @@ export default function DocumentsScreen() {
           style: "destructive",
           onPress: async () => {
             try {
-              console.log('[DOCUMENTS] Deleting document:', doc.id, doc.storage_path);
-              
               // Eliminar inmediatamente de la UI para feedback rápido
               setDocuments((prev) => prev.filter((d) => d.id !== doc.id));
               
               // Primero eliminar el registro de la base de datos (más importante)
-              const { error: deleteError, data: deleteData } = await supabase
+              const { error: deleteError } = await supabase
                 .from("documents")
                 .delete()
-                .eq("id", doc.id)
-                .select();
+                .eq("id", doc.id);
 
               if (deleteError) {
                 console.error("[DOCUMENTS] Error deleting document from DB:", deleteError);
@@ -220,8 +217,6 @@ export default function DocumentsScreen() {
                 await loadDocuments();
                 throw deleteError;
               }
-
-              console.log('[DOCUMENTS] Document deleted from DB:', deleteData);
 
               // Luego intentar eliminar el archivo del storage
               const { error: storageError } = await supabase.storage
@@ -231,16 +226,10 @@ export default function DocumentsScreen() {
               if (storageError) {
                 console.warn("[DOCUMENTS] Error deleting file from storage (non-critical):", storageError);
                 // No lanzar error, el documento ya fue eliminado de la BD
-              } else {
-                console.log('[DOCUMENTS] File deleted from storage successfully');
               }
 
               // Recargar la lista de documentos para asegurar sincronización
-              console.log('[DOCUMENTS] Reloading documents list...');
               await loadDocuments();
-              
-              // Verificar que el documento ya no está en la lista
-              console.log('[DOCUMENTS] Document deletion completed');
               
               Alert.alert("Documento", "Documento eliminado correctamente.");
             } catch (err) {

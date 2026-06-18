@@ -70,11 +70,14 @@ export function useHomeAttendanceView({
 }: AttendanceViewArgs) {
   const isCheckedIn = attendanceState.status === "checked_in"
   const isGeoChecking = geofenceState.status === "checking"
+  const isGeofenceReady =
+    geofenceState.status === "ready" &&
+    geofenceState.canProceed &&
+    !geofenceState.requiresSelection
   const canRegister =
     !isLoading &&
-    geofenceState.canProceed &&
+    isGeofenceReady &&
     !isGeoChecking &&
-    !geofenceState.requiresSelection &&
     !isCheckActionLocked
   const ctaTextColor = canRegister ? PALETTE.porcelain : PALETTE.text
   const ctaSubTextOpacity = canRegister ? 0.9 : 0.7
@@ -85,7 +88,7 @@ export function useHomeAttendanceView({
     if (isLoading || isGeoChecking || isCheckActionLocked) {
       return isGeoChecking ? "Validando ubicación..." : "Registrando..."
     }
-    if (attendanceUxState === "ready") {
+    if (attendanceUxState === "ready" && isGeofenceReady) {
       return isCheckedIn ? "Registrar salida" : "Registrar entrada"
     }
     if (hasPendingAny || isSyncingAny) return "Pendiente de sincronización"
@@ -95,6 +98,7 @@ export function useHomeAttendanceView({
     if (attendanceUxState === "queued") return "Registro guardado. Se sincroniza automáticamente."
     if (attendanceUxState === "checking") return "Validando ubicación..."
     if (attendanceUxMessage) return attendanceUxMessage
+    if (!isGeofenceReady) return "Validar ubicación en sede"
     return isCheckedIn ? "Registrar salida" : "Registrar entrada"
   }, [
     attendanceUxMessage,
@@ -102,6 +106,7 @@ export function useHomeAttendanceView({
     hasPendingAny,
     isCheckActionLocked,
     isCheckedIn,
+    isGeofenceReady,
     isGeoChecking,
     isLoading,
     isSyncingAny,
@@ -113,11 +118,13 @@ export function useHomeAttendanceView({
     if (attendanceUxState === "failed") return "Reintentar ahora"
     if (isSyncingAny) return "Puedes seguir usando la app"
     if (attendanceUxState === "queued") return "Se enviará automáticamente"
+    if (!isGeofenceReady) return "Revisar ubicación"
     return isCheckedIn ? "Terminar turno" : "Iniciar turno"
   }, [
     attendanceUxState,
     isCheckActionLocked,
     isCheckedIn,
+    isGeofenceReady,
     isGeoChecking,
     isLoading,
     isSyncingAny,

@@ -60,9 +60,7 @@ export function attachAuthSessionBootstrap({
       setUser(session?.user ?? null)
 
       if (session?.user) {
-        console.log("[AUTH] Loading employee data for user:", session.user.id)
         await loadEmployeeBundle(session.user.id)
-        console.log("[AUTH] Employee data loading completed")
       } else {
         clearEmployeeState()
         setEmployee(null)
@@ -88,12 +86,7 @@ export function attachAuthSessionBootstrap({
       setUser(nextSession?.user ?? null)
 
       if (nextSession?.user) {
-        console.log(
-          "[AUTH] Auth state changed, loading employee data for user:",
-          nextSession.user.id,
-        )
         await loadEmployeeBundle(nextSession.user.id)
-        console.log("[AUTH] Employee data loading completed after auth state change")
       } else {
         clearEmployeeState()
         setEmployee(null)

@@ -35,6 +35,8 @@ export interface DeviceInfo {
   osName?: string
   osVersion?: string
   platform: string
+  locationSource?: "last_known" | "current"
+  locationAgeMs?: number
 }
 
 export interface SiteCoordinates {
@@ -49,6 +51,7 @@ export interface SiteCoordinates {
 const VALIDATION_CONFIG = {
   maxAccuracyMeters: 50,
   maxLocationAgeMs: 30000,
+  maxFastLocationAgeMs: 120000,
   maxReasonableSpeed: 55,
   locationTimeoutMs: 15000,
 }
@@ -250,6 +253,8 @@ export async function getValidatedLocation(opts?: {
   maxAccuracyMeters?: number
   samples?: number
   timeoutMs?: number
+  allowRecentLocation?: boolean
+  recentLocationMaxAgeMs?: number
 }): Promise<LocationResult> {
   try {
     const { status } = await Location.requestForegroundPermissionsAsync()
@@ -275,6 +280,42 @@ export async function getValidatedLocation(opts?: {
     const samples = Math.max(1, Math.min(opts?.samples ?? 1, 6))
     const timeoutMs = opts?.timeoutMs ?? VALIDATION_CONFIG.locationTimeoutMs
     const perSampleTimeoutMs = Math.max(4000, Math.floor(timeoutMs / samples))
+    const allowRecentLocation = opts?.allowRecentLocation !== false
+    const recentLocationMaxAgeMs =
+      opts?.recentLocationMaxAgeMs ?? VALIDATION_CONFIG.maxFastLocationAgeMs
+
+    if (allowRecentLocation) {
+      try {
+        const recent = await Location.getLastKnownPositionAsync({
+          maxAge: recentLocationMaxAgeMs,
+          requiredAccuracy: maxAccuracyMeters,
+        })
+        if (recent?.coords) {
+          const age = Date.now() - recent.timestamp
+          const accuracy = recent.coords.accuracy ?? 999
+          const validated = buildValidatedLocationFromRaw(recent)
+          if (
+            age <= recentLocationMaxAgeMs &&
+            accuracy <= maxAccuracyMeters &&
+            validated.isValid
+          ) {
+            return {
+              success: true,
+              location: {
+                ...validated,
+                deviceInfo: {
+                  ...validated.deviceInfo,
+                  locationSource: "last_known",
+                  locationAgeMs: age,
+                },
+              },
+            }
+          }
+        }
+      } catch {
+        // Best effort: si no hay ultima ubicacion usable, seguimos con GPS actual.
+      }
+    }
 
     let best: Location.LocationObject | null = null
     let bestAccuracy = Number.POSITIVE_INFINITY
@@ -390,7 +431,14 @@ export async function getValidatedLocation(opts?: {
 
     return {
       success: true,
-      location: validatedLocation,
+      location: {
+        ...validatedLocation,
+        deviceInfo: {
+          ...validatedLocation.deviceInfo,
+          locationSource: "current",
+          locationAgeMs: locationAge,
+        },
+      },
     }
   } catch (error) {
     console.error("Error getting location:", error)

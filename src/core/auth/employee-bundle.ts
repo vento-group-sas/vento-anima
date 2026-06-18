@@ -43,7 +43,6 @@ async function loadEmployee(userId: string, setters: EmployeeBundleSetters) {
       return
     }
 
-    console.log("[AUTH] Employee loaded successfully:", data.id, data.full_name)
     const nextEmployee: Employee = {
       id: data.id,
       fullName: data.full_name,
@@ -116,7 +115,6 @@ async function loadEmployeeSites(userId: string, setters: EmployeeBundleSetters)
       })
       .filter(Boolean) as EmployeeSite[]
 
-    console.log("[AUTH] Employee sites loaded:", nextSites.length, "sites")
     setEmployeeSites(nextSites)
     await writeAuthCache(getAuthCacheKey(userId, "sites"), nextSites)
   } catch (err) {

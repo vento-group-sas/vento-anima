@@ -56,9 +56,6 @@ export async function ensureActionGeofenceReady({
       geo.status !== "blocked" &&
       geo.status !== "error"
     ) {
-      console.log(
-        `[ATTENDANCE] Geofence not ready (${geo.status}), waiting... (attempt ${attempts + 1}/${maxAttempts})`,
-      );
       await new Promise((resolve) => setTimeout(resolve, 1500));
       geo = await refreshGeofence({
         force: true,

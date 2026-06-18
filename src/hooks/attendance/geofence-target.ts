@@ -47,6 +47,29 @@ type ResolveGeofenceTargetArgs = {
   ) => Record<string, unknown> | null;
 };
 
+type SelectionCandidate = {
+  id: string;
+  name: string;
+  distanceMeters: number | null;
+  effectiveRadiusMeters: number;
+  requiresGeolocation: boolean;
+};
+
+function getCandidatesInsideRange(candidates: SelectionCandidate[]) {
+  return candidates
+    .filter((candidate) => {
+      if (!candidate.requiresGeolocation) return false;
+      if (candidate.distanceMeters == null) return false;
+      if (candidate.effectiveRadiusMeters <= 0) return false;
+      return candidate.distanceMeters <= candidate.effectiveRadiusMeters;
+    })
+    .sort((left, right) => {
+      const leftDistance = left.distanceMeters ?? Number.POSITIVE_INFINITY;
+      const rightDistance = right.distanceMeters ?? Number.POSITIVE_INFINITY;
+      return leftDistance - rightDistance;
+    });
+}
+
 export async function resolveGeofenceTarget({
   argsMode,
   argsSiteId,
@@ -105,26 +128,62 @@ export async function resolveGeofenceTarget({
     } else if (employeeSites.length > 1) {
       if (effectiveSelectedSiteId) {
         siteId = effectiveSelectedSiteId;
+
+        const selectionLocation =
+          await resolveBestEffortSelectionLocation(location);
+        const candidates = buildSelectionCandidates(
+          employeeSites,
+          selectionLocation ?? null,
+        );
+        const selectedCandidate = candidates.find(
+          (candidate) => candidate.id === effectiveSelectedSiteId,
+        );
+        const selectedInsideRange =
+          selectedCandidate?.requiresGeolocation === true &&
+          selectedCandidate.distanceMeters != null &&
+          selectedCandidate.effectiveRadiusMeters > 0 &&
+          selectedCandidate.distanceMeters <= selectedCandidate.effectiveRadiusMeters;
+        const insideRange = getCandidatesInsideRange(candidates);
+
+        if (
+          selectionLocation &&
+          !selectedInsideRange &&
+          insideRange.length === 1
+        ) {
+          siteId = insideRange[0].id;
+        }
       } else {
         const selectionLocation =
           await resolveBestEffortSelectionLocation(location);
-        return {
-          kind: "blocked",
-          state: buildGeofenceBlockedState({
-            mode,
-            lastUpdateSource: updateSource,
-            message: "Selecciona una sede para continuar",
-            updatedAt: now,
-            location: selectionLocation ?? null,
-            deviceInfo: buildDeviceInfoPayload(selectionLocation ?? null),
-            requiresSelection: true,
-            candidateSites: buildSelectionCandidates(
-              employeeSites,
-              selectionLocation ?? null,
-            ),
-            accuracyMeters: selectionLocation?.accuracy ?? null,
-          }),
-        };
+        const candidates = buildSelectionCandidates(
+          employeeSites,
+          selectionLocation ?? null,
+        );
+        const insideRange = getCandidatesInsideRange(candidates);
+
+        if (insideRange.length === 1) {
+          siteId = insideRange[0].id;
+        } else if (assignedNonGeoSites.length === 1 && assignedGeoSites.length === 0) {
+          siteId = assignedNonGeoSites[0].siteId;
+        } else {
+          return {
+            kind: "blocked",
+            state: buildGeofenceBlockedState({
+              mode,
+              lastUpdateSource: updateSource,
+              message:
+                insideRange.length > 1
+                  ? "Estás cerca de varias sedes. Elige una para continuar."
+                  : "Selecciona una sede para continuar",
+              updatedAt: now,
+              location: selectionLocation ?? null,
+              deviceInfo: buildDeviceInfoPayload(selectionLocation ?? null),
+              requiresSelection: true,
+              candidateSites: candidates,
+              accuracyMeters: selectionLocation?.accuracy ?? null,
+            }),
+          };
+        }
       }
     } else if (employeeSites.length === 1) {
       siteId = employeeSites[0].siteId;

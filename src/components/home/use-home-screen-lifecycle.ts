@@ -91,11 +91,13 @@ export function useHomeScreenLifecycle({
   const lastUserIdRef = useRef<string | null>(null);
   const realtimeStartedRef = useRef(false);
   const siteRefreshInFlightRef = useRef(false);
+  const [initialLoadDone, setInitialLoadDone] = useState(false);
   const [stuckTimeout, setStuckTimeout] = useState(false);
 
   useEffect(() => {
     if (userId !== lastUserIdRef.current) {
       initialLoadDoneRef.current = false;
+      setInitialLoadDone(false);
       lastStatusRef.current = null;
       lastUserIdRef.current = userId ?? null;
     }
@@ -105,6 +107,7 @@ export function useHomeScreenLifecycle({
     if (authIsLoading) return;
     if (!userId) {
       initialLoadDoneRef.current = false;
+      setInitialLoadDone(false);
       return;
     }
 
@@ -112,21 +115,14 @@ export function useHomeScreenLifecycle({
     if (initialLoadDoneRef.current) return;
 
     initialLoadDoneRef.current = true;
-    console.log(
-      "[HOME] Loading initial data. Employee:",
-      employee?.fullName ?? "null",
-      "Sites:",
-      employeeSites.length,
-    );
+    setInitialLoadDone(true);
 
     void loadTodayAttendance();
 
     if (!employee || employeeSites.length === 0) {
-      console.log("[HOME] No employee or sites, skipping geofence check");
       return;
     }
 
-    console.log("[HOME] Initial geofence check on load");
     void refreshGeofence({ force: true, source: "user" });
   }, [
     authIsLoading,
@@ -235,6 +231,6 @@ export function useHomeScreenLifecycle({
   );
 
   return {
-    initialLoadDone: initialLoadDoneRef.current,
+    initialLoadDone,
   };
 }
