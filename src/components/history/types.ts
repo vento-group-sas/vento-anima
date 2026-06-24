@@ -10,8 +10,22 @@ export type AttendanceLog = {
   notes: string | null;
 };
 
+export type HistoryStatusLabel =
+  | "En curso"
+  | "Turno cerrado"
+  | "Sin salida"
+  | "Sin entrada"
+  | "Salida registrada";
+
 export type DerivedLog = AttendanceLog & {
-  statusLabel: string;
+  statusLabel: HistoryStatusLabel;
   durationMinutes: number | null;
   dayKey: string;
+  checkInAt: string | null;
+  checkOutAt: string | null;
+  checkInLogId: string | null;
+  checkOutLogId: string | null;
+  checkInAccuracyMeters: number | null;
+  checkOutAccuracyMeters: number | null;
+  checkOutNotes: string | null;
 };

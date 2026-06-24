@@ -45,6 +45,44 @@ function formatRangeLabel(start: Date, end: Date) {
   return `${left} - ${right}`;
 }
 
+function getDayKey(value: string) {
+  return value.slice(0, 10);
+}
+
+type HistoryDerivedLog = DerivedLog & {
+  checkInAt: string | null;
+  checkOutAt: string | null;
+  checkInLogId: string | null;
+  checkOutLogId: string | null;
+  checkInAccuracyMeters: number | null;
+  checkOutAccuracyMeters: number | null;
+  checkOutNotes: string | null;
+};
+
+function buildHistoryRow(
+  log: AttendanceLog,
+  statusLabel: DerivedLog["statusLabel"],
+  checkOutLog?: AttendanceLog | null,
+): HistoryDerivedLog {
+  const isCheckIn = log.action === "check_in";
+  const fallbackCheckOut = !isCheckIn && !checkOutLog ? log : null;
+
+  return {
+    ...log,
+    dayKey: getDayKey(log.occurred_at),
+    statusLabel,
+    durationMinutes: null,
+    checkInAt: isCheckIn ? log.occurred_at : null,
+    checkOutAt: checkOutLog?.occurred_at ?? fallbackCheckOut?.occurred_at ?? null,
+    checkInLogId: isCheckIn ? log.id : null,
+    checkOutLogId: checkOutLog?.id ?? fallbackCheckOut?.id ?? null,
+    checkInAccuracyMeters: isCheckIn ? log.accuracy_meters : null,
+    checkOutAccuracyMeters:
+      checkOutLog?.accuracy_meters ?? fallbackCheckOut?.accuracy_meters ?? null,
+    checkOutNotes: checkOutLog?.notes ?? fallbackCheckOut?.notes ?? null,
+  };
+}
+
 type UseHistoryDataArgs = {
   userId: string | undefined;
 };
@@ -70,7 +108,11 @@ export function useHistoryData({ userId }: UseHistoryDataArgs) {
   );
 
   const loadHistory = useCallback(async () => {
-    if (!userId) return;
+    if (!userId) {
+      setRows([]);
+      return;
+    }
+
     setIsLoading(true);
 
     try {
@@ -90,72 +132,30 @@ export function useHistoryData({ userId }: UseHistoryDataArgs) {
       if (logsError) throw logsError;
 
       const logs = (logsData ?? []) as AttendanceLog[];
-      const derived: DerivedLog[] = [];
-      let pendingIndex: number | null = null;
+      const derived: HistoryDerivedLog[] = [];
+      let openCheckIn: AttendanceLog | null = null;
 
-      logs.forEach((log) => {
-        const dayKey = log.occurred_at.slice(0, 10);
+      for (const log of logs) {
         if (log.action === "check_in") {
-          if (pendingIndex != null) {
-            derived[pendingIndex] = {
-              ...derived[pendingIndex],
-              statusLabel: "Sin salida",
-              durationMinutes: null,
-            };
+          if (openCheckIn) {
+            derived.push(buildHistoryRow(openCheckIn, "Sin salida"));
           }
-          const index = derived.length;
-          derived.push({
-            ...log,
-            dayKey,
-            statusLabel: "En curso",
-            durationMinutes: null,
-          });
-          pendingIndex = index;
-          return;
+
+          openCheckIn = log;
+          continue;
         }
 
-        if (pendingIndex != null) {
-          const pending = derived[pendingIndex];
-          const start = new Date(pending.occurred_at).getTime();
-          const end = new Date(log.occurred_at).getTime();
-          const grossMinutes = (end - start) / 60000;
-          const netMinutes = Math.max(0, grossMinutes);
-
-          derived[pendingIndex] = {
-            ...pending,
-            statusLabel: "Salida registrada",
-            durationMinutes: netMinutes,
-          };
-
-          derived.push({
-            ...log,
-            dayKey,
-            statusLabel: "Turno cerrado",
-            durationMinutes: netMinutes,
-          });
-
-          pendingIndex = null;
-          return;
+        if (openCheckIn) {
+          derived.push(buildHistoryRow(openCheckIn, "Turno cerrado", log));
+          openCheckIn = null;
+          continue;
         }
 
-        derived.push({
-          ...log,
-          dayKey,
-          statusLabel: "Sin entrada",
-          durationMinutes: null,
-        });
-      });
+        derived.push(buildHistoryRow(log, "Sin entrada"));
+      }
 
-      if (pendingIndex != null) {
-        const pending = derived[pendingIndex];
-        const start = new Date(pending.occurred_at).getTime();
-        const now = Date.now();
-        const netMinutes = Math.max(0, (now - start) / 60000);
-        derived[pendingIndex] = {
-          ...pending,
-          statusLabel: "En curso",
-          durationMinutes: netMinutes,
-        };
+      if (openCheckIn) {
+        derived.push(buildHistoryRow(openCheckIn, "En curso"));
       }
 
       setRows(derived.sort((a, b) => (a.occurred_at < b.occurred_at ? 1 : -1)));

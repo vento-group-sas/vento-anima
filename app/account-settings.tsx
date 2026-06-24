@@ -35,6 +35,11 @@ type PushTokenSyncResult = { ok: boolean; message: string };
 const EXPO_PROJECT_ID = ANIMA_RUNTIME.expoProjectId;
 const PUSH_TOKEN_MAX_ATTEMPTS = 3;
 const PUSH_TOKEN_TIMEOUT_MS = 10000;
+const QA_ALLOWED_EMAILS = new Set(["carlosaaibarra@gmail.com"]);
+
+function canAccessAnimaDiagnostics(email: string | null | undefined) {
+  return QA_ALLOWED_EMAILS.has(String(email ?? "").trim().toLowerCase());
+}
 
 function wait(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -381,6 +386,12 @@ export default function AccountSettingsScreen() {
     }
   }, [openSystemSettings, refreshPermissions]);
 
+  const canOpenAnimaDiagnostics = canAccessAnimaDiagnostics(user?.email);
+
+  const openAnimaDiagnostics = useCallback(() => {
+    router.push("/anima-diagnostics");
+  }, [router]);
+
   const handleSignOut = useCallback(async () => {
     await signOut();
     router.replace("/(auth)/splash");
@@ -536,6 +547,20 @@ export default function AccountSettingsScreen() {
           </Text>
         </View>
 
+        {canOpenAnimaDiagnostics ? (
+          <View style={styles.infoCard}>
+            <Text style={styles.infoTitle}>Diagnóstico ANIMA</Text>
+            <Text style={styles.infoText}>
+              Panel privado para validar asistencia, turnos publicados, geocerca y contexto operativo.
+            </Text>
+
+            <TouchableOpacity style={styles.secondaryAction} onPress={openAnimaDiagnostics}>
+              <Ionicons name="bug-outline" size={16} color={COLORS.text} />
+              <Text style={styles.secondaryActionText}>Abrir diagnóstico</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
         <TouchableOpacity style={styles.signOutAction} onPress={handleSignOut}>
           <Ionicons name="log-out-outline" size={16} color="#fff" />
           <Text style={styles.signOutActionText}>Cerrar sesión</Text>
@@ -557,6 +582,7 @@ export default function AccountSettingsScreen() {
     );
   }, [
     activeSection,
+    canOpenAnimaDiagnostics,
     cancelFullDeletion,
     handleSignOut,
     loadingStatus,
@@ -571,6 +597,7 @@ export default function AccountSettingsScreen() {
     notificationMeta.label,
     notificationCanAskAgain,
     notificationStatus,
+    openAnimaDiagnostics,
     openSystemSettings,
     pendingRequest,
     requestDataCleanup,

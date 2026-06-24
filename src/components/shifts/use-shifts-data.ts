@@ -22,18 +22,19 @@ function getShiftSortValue(shift: Pick<ShiftRow, "shift_date" | "start_time">) {
 }
 
 function getWeekDays() {
-  const now = new Date();
-  now.setHours(12, 0, 0, 0);
-  const day = now.getDay();
-  const diff = (day + 6) % 7;
-  const monday = new Date(now);
-  monday.setDate(now.getDate() - diff);
+  const today = new Date();
+  today.setHours(12, 0, 0, 0);
 
-  return Array.from({ length: 7 }).map((_, index) => {
-    const date = new Date(monday);
-    date.setDate(monday.getDate() + index);
+  const day = today.getDay();
+  const daysUntilSunday = day === 0 ? 0 : 7 - day;
+
+  return Array.from({ length: daysUntilSunday + 1 }).map((_, index) => {
+    const date = new Date(today);
+    date.setDate(today.getDate() + index);
+
     const iso = date.toISOString().slice(0, 10);
     const weekday = date.toLocaleDateString("es-CO", { weekday: "long" });
+
     return {
       date: iso,
       label: `${weekday.charAt(0).toUpperCase()}${weekday.slice(1)}`,

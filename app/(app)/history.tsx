@@ -1,4 +1,3 @@
-import { useState } from "react";
 import {
   ActivityIndicator,
   RefreshControl,
@@ -29,6 +28,11 @@ function formatHour(value: string) {
   });
 }
 
+function formatOptionalHour(value?: string | null) {
+  if (!value) return "--:--";
+  return formatHour(value);
+}
+
 function formatDayLabel(value: string) {
   const date = new Date(value);
   const day = date.toLocaleDateString("es-CO", { weekday: "long" });
@@ -56,6 +60,18 @@ function getSiteName(
   if (!sites) return null;
   if (Array.isArray(sites)) return sites[0]?.name ?? null;
   return sites.name ?? null;
+}
+
+function getCheckInAt(item: unknown) {
+  const row = item as { action?: string; occurred_at?: string; checkInAt?: string | null };
+  if (row.checkInAt) return row.checkInAt;
+  return row.action === "check_in" ? row.occurred_at ?? null : null;
+}
+
+function getCheckOutAt(item: unknown) {
+  const row = item as { action?: string; occurred_at?: string; checkOutAt?: string | null };
+  if (row.checkOutAt) return row.checkOutAt;
+  return row.action === "check_out" ? row.occurred_at ?? null : null;
 }
 
 export default function HistoryScreen() {
@@ -90,6 +106,7 @@ export default function HistoryScreen() {
   } = useHistoryInteractions({
     setRows,
   });
+
   const statusUI = (label: string) => {
     if (label === "En curso") {
       return {
@@ -99,6 +116,7 @@ export default function HistoryScreen() {
         icon: "time-outline" as const,
       };
     }
+
     if (label === "Turno cerrado") {
       return {
         tone: COLORS.rosegold,
@@ -107,14 +125,7 @@ export default function HistoryScreen() {
         icon: "checkmark-circle-outline" as const,
       };
     }
-    if (label === "Salida registrada") {
-      return {
-        tone: COLORS.rosegold,
-        bg: "rgba(242, 198, 192, 0.20)",
-        border: "rgba(183, 110, 121, 0.55)",
-        icon: "checkmark-done-outline" as const,
-      };
-    }
+
     if (label === "Sin salida" || label === "Sin entrada") {
       return {
         tone: COLORS.neutral,
@@ -123,6 +134,7 @@ export default function HistoryScreen() {
         icon: "alert-circle-outline" as const,
       };
     }
+
     return {
       tone: COLORS.neutral,
       bg: COLORS.porcelainAlt,
@@ -145,11 +157,9 @@ export default function HistoryScreen() {
         <Text style={styles.title}>Historial</Text>
         <Text style={styles.subtitle}>Tus registros de asistencia</Text>
 
-        <View style={{ ...UI.card, padding: 14, marginTop: 16 }}>
-          <Text style={{ fontSize: 12, color: COLORS.neutral }}>Periodo</Text>
-          <View
-            style={{ flexDirection: "row", alignItems: "center", marginTop: 8 }}
-          >
+        <View style={styles.periodCard}>
+          <Text style={styles.periodLabel}>Periodo</Text>
+          <View style={styles.periodControls}>
             <TouchableOpacity
               onPress={() => shiftRange("prev")}
               style={[
@@ -163,15 +173,9 @@ export default function HistoryScreen() {
               <Ionicons name="chevron-back" size={16} color={COLORS.text} />
             </TouchableOpacity>
 
-            <View style={{ flex: 1, alignItems: "center" }}>
-              <Text
-                style={{ fontSize: 14, fontWeight: "700", color: COLORS.text }}
-              >
-                {rangeLabel}
-              </Text>
-              <Text
-                style={{ fontSize: 12, color: COLORS.neutral, marginTop: 4 }}
-              >
+            <View style={styles.periodCenter}>
+              <Text style={styles.periodRange}>{rangeLabel}</Text>
+              <Text style={styles.periodMode}>
                 {rangeMode === "week" ? "Semana" : "Mes"}
               </Text>
             </View>
@@ -243,215 +247,114 @@ export default function HistoryScreen() {
         }
       >
         {isLoading ? (
-          <View style={{ paddingTop: 40, alignItems: "center" }}>
+          <View style={styles.loadingState}>
             <ActivityIndicator color={COLORS.accent} />
-            <Text style={{ marginTop: 8, color: COLORS.neutral }}>
-              Cargando...
-            </Text>
+            <Text style={styles.loadingText}>Cargando...</Text>
           </View>
         ) : null}
 
         {!isLoading && grouped.length === 0 ? <HistoryEmptyState /> : null}
 
         {grouped.map(([dayKey, items]) => (
-          <View key={dayKey} style={{ marginBottom: 16 }}>
-            <Text
-              style={{
-                fontSize: 13,
-                fontWeight: "700",
-                color: COLORS.text,
-                marginBottom: 8,
-              }}
-            >
-              {formatDayLabel(items[0].occurred_at)}
-            </Text>
-            <View style={{ ...UI.card, padding: 12 }}>
-              {items.map((item, index) => {
-                const actionLabel =
-                  item.action === "check_in" ? "Entrada" : "Salida";
-                const st = statusUI(item.statusLabel);
-                return (
-                  <View key={item.id}>
-                    {index > 0 ? (
-                      <View
-                        style={{
-                          height: 1,
-                          backgroundColor: COLORS.border,
-                          marginVertical: 12,
-                        }}
-                      />
-                    ) : null}
-                    <View style={{ flexDirection: "row", alignItems: "flex-start" }}>
-                      <View style={{ flex: 1, paddingRight: 10 }}>
-                        <View
-                          style={{
-                            flexDirection: "row",
-                            alignItems: "center",
-                            gap: 8,
-                          }}
-                        >
-                          <Ionicons
-                            name={
-                              item.action === "check_in"
-                                ? "log-in-outline"
-                                : "log-out-outline"
-                            }
-                            size={16}
-                            color={COLORS.text}
-                          />
-                          <Text
-                            style={{
-                              fontSize: 14,
-                              fontWeight: "800",
-                              color: COLORS.text,
-                              fontVariant: ["tabular-nums"],
-                            }}
-                          >
-                            {actionLabel} - {formatHour(item.occurred_at)}
-                          </Text>
-                        </View>
-                        <Text
-                          style={{
-                            fontSize: 12,
-                            color: COLORS.neutral,
-                            marginTop: 4,
-                          }}
-                        >
-                          {getSiteName(item.sites) ?? "Sede no disponible"}
-                        </Text>
-                      </View>
-                      <View
-                        style={[
-                          UI.pill,
-                          {
-                            flexDirection: "row",
-                            alignItems: "center",
-                            gap: 6,
-                            borderColor: st.border,
-                            backgroundColor: st.bg,
-                            maxWidth: "46%",
-                            alignSelf: "flex-start",
-                          },
-                        ]}
-                      >
-                        <Ionicons name={st.icon} size={14} color={st.tone} />
-                        <Text
-                          style={{
-                            fontSize: 11,
-                            fontWeight: "800",
-                            color: st.tone,
-                            flexShrink: 1,
-                          }}
-                        >
-                          {item.statusLabel}
-                        </Text>
-                      </View>
-                    </View>
+          <View key={dayKey} style={styles.daySection}>
+            <Text style={styles.dayTitle}>{formatDayLabel(items[0].occurred_at)}</Text>
 
-                    <View style={{ marginTop: 10 }}>
-                      <View
-                        style={{
-                          flexDirection: "row",
-                          alignItems: "center",
-                        }}
-                      >
-                        <Text
-                          style={{ fontSize: 12, color: COLORS.neutral, flex: 1 }}
-                        >
-                          Duracion neta del turno
-                        </Text>
-                        <Text
-                          style={{
-                            fontSize: 13,
-                            fontWeight: "800",
-                            color: COLORS.text,
-                            fontVariant: ["tabular-nums"],
-                            marginLeft: 8,
-                          }}
-                        >
-                          {formatDuration(item.durationMinutes)}
-                        </Text>
-                      </View>
+            {items.map((item) => {
+              const st = statusUI(item.statusLabel);
+              const checkInAt = getCheckInAt(item);
+              const checkOutAt = getCheckOutAt(item);
+              const siteName = getSiteName(item.sites) ?? "Sede no disponible";
+
+              return (
+                <View key={item.id} style={styles.recordCard}>
+                  <View style={styles.recordHeader}>
+                    <View style={styles.recordTitleBlock}>
+                      <Text style={styles.recordTitle}>
+                        {item.statusLabel === "En curso" ? "Turno en curso" : "Turno"}
+                      </Text>
+                      <Text style={styles.recordSite}>{siteName}</Text>
                     </View>
 
                     <View
-                      style={{ flexDirection: "row", gap: 10, marginTop: 12 }}
+                      style={[
+                        styles.statusPill,
+                        {
+                          borderColor: st.border,
+                          backgroundColor: st.bg,
+                        },
+                      ]}
                     >
-                      <TouchableOpacity
-                        onPress={() => openDetails(item)}
-                        style={[
-                          UI.chip,
-                          {
-                            borderColor: COLORS.border,
-                            backgroundColor: COLORS.porcelainAlt,
-                            flex: 1,
-                          },
-                        ]}
-                      >
-                        <View
-                          style={{
-                            flexDirection: "row",
-                            alignItems: "center",
-                            gap: 8,
-                            justifyContent: "center",
-                          }}
-                        >
-                          <Ionicons
-                            name="information-circle-outline"
-                            size={16}
-                            color={COLORS.text}
-                          />
-                          <Text
-                            style={{
-                              fontSize: 12,
-                              fontWeight: "800",
-                              color: COLORS.text,
-                            }}
-                          >
-                            Ver detalle
-                          </Text>
-                        </View>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        onPress={() => openIncident(item)}
-                        style={[
-                          UI.chip,
-                          {
-                            borderColor: COLORS.rosegold,
-                            backgroundColor: "rgba(242, 198, 192, 0.2)",
-                            flex: 1,
-                          },
-                        ]}
-                      >
-                        <View
-                          style={{
-                            flexDirection: "row",
-                            alignItems: "center",
-                            gap: 8,
-                            justifyContent: "center",
-                          }}
-                        >
-                          <Ionicons
-                            name="alert-circle-outline"
-                            size={16}
-                            color={COLORS.rosegold}
-                          />
-                          <Text
-                            style={{
-                              fontSize: 12,
-                              fontWeight: "800",
-                              color: COLORS.rosegold,
-                            }}
-                          >
-                            Incidencia
-                          </Text>
-                        </View>
-                      </TouchableOpacity>
+                      <Ionicons name={st.icon} size={14} color={st.tone} />
+                      <Text style={[styles.statusText, { color: st.tone }]}>
+                        {item.statusLabel}
+                      </Text>
                     </View>
                   </View>
-                );
-              })}
-            </View>
+
+                  <View style={styles.timeGrid}>
+                    <View style={styles.timeBox}>
+                      <View style={styles.timeBoxHeader}>
+                        <Ionicons name="log-in-outline" size={16} color={COLORS.accent} />
+                        <Text style={styles.timeLabel}>Entrada</Text>
+                      </View>
+                      <Text style={styles.timeValue}>{formatOptionalHour(checkInAt)}</Text>
+                    </View>
+
+                    <View style={styles.timeBox}>
+                      <View style={styles.timeBoxHeader}>
+                        <Ionicons name="log-out-outline" size={16} color={COLORS.rosegold} />
+                        <Text style={styles.timeLabel}>Salida</Text>
+                      </View>
+                      <Text style={styles.timeValue}>{formatOptionalHour(checkOutAt)}</Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.actionRow}>
+                    <TouchableOpacity
+                      onPress={() => openDetails(item)}
+                      style={[
+                        UI.chip,
+                        {
+                          borderColor: COLORS.border,
+                          backgroundColor: COLORS.porcelainAlt,
+                          flex: 1,
+                        },
+                      ]}
+                    >
+                      <View style={styles.buttonInner}>
+                        <Ionicons
+                          name="information-circle-outline"
+                          size={16}
+                          color={COLORS.text}
+                        />
+                        <Text style={styles.detailButtonText}>Ver detalle</Text>
+                      </View>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      onPress={() => openIncident(item)}
+                      style={[
+                        UI.chip,
+                        {
+                          borderColor: COLORS.rosegold,
+                          backgroundColor: "rgba(242, 198, 192, 0.2)",
+                          flex: 1,
+                        },
+                      ]}
+                    >
+                      <View style={styles.buttonInner}>
+                        <Ionicons
+                          name="alert-circle-outline"
+                          size={16}
+                          color={COLORS.rosegold}
+                        />
+                        <Text style={styles.incidentButtonText}>Incidencia</Text>
+                      </View>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              );
+            })}
           </View>
         ))}
       </ScrollView>
@@ -492,6 +395,141 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: COLORS.neutral,
   },
+  periodCard: {
+    ...UI.card,
+    padding: 14,
+    marginTop: 16,
+  },
+  periodLabel: {
+    fontSize: 12,
+    color: COLORS.neutral,
+  },
+  periodControls: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 8,
+  },
+  periodCenter: {
+    flex: 1,
+    alignItems: "center",
+  },
+  periodRange: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: COLORS.text,
+  },
+  periodMode: {
+    fontSize: 12,
+    color: COLORS.neutral,
+    marginTop: 4,
+  },
+  loadingState: {
+    paddingTop: 40,
+    alignItems: "center",
+  },
+  loadingText: {
+    marginTop: 8,
+    color: COLORS.neutral,
+  },
+  daySection: {
+    marginBottom: 16,
+  },
+  dayTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: COLORS.text,
+    marginBottom: 8,
+  },
+  recordCard: {
+    ...UI.card,
+    padding: 14,
+    marginBottom: 10,
+  },
+  recordHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+  },
+  recordTitleBlock: {
+    flex: 1,
+    paddingRight: 4,
+  },
+  recordTitle: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: COLORS.text,
+  },
+  recordSite: {
+    fontSize: 12,
+    color: COLORS.neutral,
+    marginTop: 4,
+  },
+  statusPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    maxWidth: "48%",
+  },
+  statusText: {
+    fontSize: 11,
+    fontWeight: "800",
+    flexShrink: 1,
+  },
+  timeGrid: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 14,
+  },
+  timeBox: {
+    flex: 1,
+    borderRadius: 14,
+    padding: 12,
+    backgroundColor: COLORS.porcelainAlt,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  timeBoxHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 8,
+  },
+  timeLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: COLORS.neutral,
+  },
+  timeValue: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: COLORS.text,
+    fontVariant: ["tabular-nums"],
+  },
+  actionRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 12,
+  },
+  buttonInner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    justifyContent: "center",
+  },
+  detailButtonText: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: COLORS.text,
+  },
+  incidentButtonText: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: COLORS.rosegold,
+  },
   segmentWrap: {
     flexDirection: "row",
     marginTop: 12,
@@ -521,6 +559,3 @@ const styles = StyleSheet.create({
     color: COLORS.accent,
   },
 });
-
-
-

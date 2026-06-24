@@ -127,6 +127,115 @@ type LastAttendanceLogSnapshot = {
   pending?: boolean
 }
 
+type PublishedShiftContext = {
+  id: string
+  site_id: string
+  area_id: string | null
+  operational_role: string | null
+  checkin_site_id: string | null
+  checkout_site_id: string | null
+}
+
+type GeofenceSiteLike = {
+  siteId: string
+  siteName: string
+  latitude: number | null
+  longitude: number | null
+  radiusMeters: number | null
+  requiresGeolocation?: boolean | null
+}
+
+function cleanOptionalId(value: string | null | undefined): string | null {
+  const normalized = String(value ?? "").trim()
+  return normalized.length > 0 ? normalized : null
+}
+
+function uniqueCleanIds(values: Array<string | null | undefined>) {
+  const seen = new Set<string>()
+  const resolved: string[] = []
+
+  for (const value of values) {
+    const id = cleanOptionalId(value)
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    resolved.push(id)
+  }
+
+  return resolved
+}
+
+function buildShiftGeofenceContext(shift: PublishedShiftContext | null) {
+  if (!shift) return null
+
+  return {
+    operationalSiteId: shift.site_id,
+    checkInSiteId: shift.checkin_site_id,
+    checkOutSiteId: shift.checkout_site_id,
+  }
+}
+
+
+function toPublishedShiftContext(row: any): PublishedShiftContext | null {
+  const id = cleanOptionalId(row?.id)
+  const siteId = cleanOptionalId(row?.site_id)
+
+  if (!id || !siteId) return null
+
+  return {
+    id,
+    site_id: siteId,
+    area_id: cleanOptionalId(row?.area_id),
+    operational_role: cleanOptionalId(row?.operational_role),
+    checkin_site_id: cleanOptionalId(row?.checkin_site_id),
+    checkout_site_id: cleanOptionalId(row?.checkout_site_id),
+  }
+}
+
+function buildShiftDeviceContext(args: {
+  mode: GeofenceMode
+  shift: PublishedShiftContext | null
+  operationalSiteId: string | null
+  geofenceSiteId: string | null
+}) {
+  return {
+    mode: args.mode,
+    shiftId: args.shift?.id ?? null,
+    siteId: args.operationalSiteId,
+    areaId: args.shift?.area_id ?? null,
+    operationalRole: args.shift?.operational_role ?? null,
+    checkinSiteId: args.shift?.checkin_site_id ?? null,
+    checkoutSiteId: args.shift?.checkout_site_id ?? null,
+    geofenceSiteId: args.geofenceSiteId,
+  }
+}
+
+function withOperationalGeofenceContext(
+  state: GeofenceCheckState,
+  args: {
+    mode: GeofenceMode
+    shift: PublishedShiftContext | null
+    operationalSiteId: string
+    operationalSiteName: string | null
+    geofenceSiteId: string
+  }
+): GeofenceCheckState {
+  return {
+    ...state,
+    siteId: args.operationalSiteId,
+    siteName: args.operationalSiteName ?? state.siteName,
+    deviceInfo: {
+      ...(state.deviceInfo ?? {}),
+      attendanceContext: buildShiftDeviceContext({
+        mode: args.mode,
+        shift: args.shift,
+        operationalSiteId: args.operationalSiteId,
+        geofenceSiteId: args.geofenceSiteId,
+      }),
+    },
+  }
+}
+
+
 export function useAttendance() {
   const { user, employee, employeeSites, selectedSiteId, setSelectedSite } = useAuth()
   const { policy: attendancePolicy } = useAttendancePolicy()
@@ -244,22 +353,107 @@ export function useAttendance() {
     }
   }, [user])
 
-  /** Turno publicado del día para este empleado en esta sede (para relacionar check-in con turno). */
-  const getTodayShiftIdForSite = useCallback(
-    async (employeeId: string, siteId: string): Promise<string | null> => {
+  const getPublishedShiftContext = useCallback(
+    async (args: {
+      employeeId: string
+      mode: GeofenceMode
+      operationalSiteId?: string | null
+      shiftId?: string | null
+    }): Promise<PublishedShiftContext | null> => {
+      const cleanShiftId = cleanOptionalId(args.shiftId)
+      if (cleanShiftId) {
+        const { data, error } = await supabase
+          .from("employee_shifts")
+          .select("*")
+          .eq("id", cleanShiftId)
+          .eq("employee_id", args.employeeId)
+          .neq("shift_kind", "descanso")
+          .not("published_at", "is", null)
+          .maybeSingle()
+
+        if (!error && data) {
+          return toPublishedShiftContext(data)
+        }
+      }
+
       const today = new Date().toISOString().slice(0, 10)
-      const { data, error } = await supabase
+      const cleanOperationalSiteId = cleanOptionalId(args.operationalSiteId)
+
+      let query = supabase
         .from("employee_shifts")
-        .select("id")
-        .eq("employee_id", employeeId)
-        .eq("site_id", siteId)
+        .select("*")
+        .eq("employee_id", args.employeeId)
         .eq("shift_date", today)
         .neq("shift_kind", "descanso")
         .not("published_at", "is", null)
-        .limit(1)
-        .maybeSingle()
-      if (error || !data) return null
-      return (data as { id: string }).id
+        .order("start_time", { ascending: true })
+
+      if (cleanOperationalSiteId) {
+        query = query.eq("site_id", cleanOperationalSiteId)
+      }
+
+      const { data, error } = await query.limit(2)
+      if (error || !data || data.length === 0) return null
+      if (!cleanOperationalSiteId && data.length > 1) return null
+
+      return toPublishedShiftContext(data[0])
+    },
+    []
+  )
+
+  const loadGeofenceSitesForShift = useCallback(
+    async (shift: PublishedShiftContext | null): Promise<GeofenceSiteLike[]> => {
+      const ids = uniqueCleanIds([
+        shift?.checkin_site_id,
+        shift?.checkout_site_id,
+      ])
+
+      if (ids.length === 0) return []
+
+      const { data, error } = await supabase
+        .from("sites")
+        .select("*")
+        .in("id", ids)
+
+      if (error || !data) return []
+
+      return data
+        .map((row: any): GeofenceSiteLike | null => {
+          const siteId = cleanOptionalId(row?.id)
+          if (!siteId) return null
+
+          return {
+            siteId,
+            siteName: row?.name ?? "Punto de marcación",
+            latitude: row?.latitude ?? null,
+            longitude: row?.longitude ?? null,
+            radiusMeters: row?.checkin_radius_meters ?? null,
+            requiresGeolocation:
+              row?.requires_geolocation ?? (row?.latitude != null && row?.longitude != null),
+          }
+        })
+        .filter(Boolean) as GeofenceSiteLike[]
+    },
+    []
+  )
+
+  const seedGeofenceSiteResolveCache = useCallback(
+    (sites: GeofenceSiteLike[], cachedAt: number) => {
+      for (const site of sites) {
+        siteResolveCacheRef.current.set(site.siteId, {
+          site: {
+            id: site.siteId,
+            name: site.siteName,
+            latitude: site.latitude,
+            longitude: site.longitude,
+            radiusMeters: site.radiusMeters,
+            requiresGeolocation:
+              site.requiresGeolocation ?? (site.latitude != null && site.longitude != null),
+          } as SiteCoordinates,
+          hasCoordinates: site.latitude != null && site.longitude != null,
+          cachedAt,
+        })
+      }
     },
     []
   )
@@ -1233,7 +1427,7 @@ export function useAttendance() {
           return next
         }
 
-        let mode: GeofenceMode
+        let mode: GeofenceMode = args?.mode ?? "check_in"
         let siteId: string | null = null
         let location: ValidatedLocation | null = args?.location ?? null
 
@@ -1241,12 +1435,31 @@ export function useAttendance() {
           location = null
         }
 
-        const lastLog = args?.mode ? null : await getLastAttendanceLog()
+        const lastLog = args?.mode ? await getEffectiveLastAttendanceLog() : await getLastAttendanceLog()
+        const requestedMode: GeofenceMode =
+          args?.mode ?? (lastLog?.action === "check_in" ? "check_out" : "check_in")
+        const requestedOperationalSiteId =
+          cleanOptionalId(args?.siteId) ??
+          (requestedMode === "check_out"
+            ? cleanOptionalId(lastLog?.site_id)
+            : cleanOptionalId(selectedSiteId))
+
+        const shiftContext = await getPublishedShiftContext({
+          employeeId: user.id,
+          mode: requestedMode,
+          operationalSiteId: requestedOperationalSiteId,
+          shiftId: requestedMode === "check_out" ? lastLog?.shift_id ?? null : null,
+        })
+        const geofenceSites = await loadGeofenceSitesForShift(shiftContext)
+        seedGeofenceSiteResolveCache(geofenceSites, now)
+
         const target = await resolveGeofenceTarget({
-          argsMode: args?.mode,
+          argsMode: requestedMode,
           argsSiteId: args?.siteId,
           selectedSiteId,
           employeeSites,
+          geofenceSites,
+          shiftGeofenceContext: buildShiftGeofenceContext(shiftContext),
           lastLog,
           now,
           updateSource,
@@ -1268,7 +1481,10 @@ export function useAttendance() {
         }
 
         mode = target.mode
-        siteId = target.siteId
+        const operationalSiteId = target.siteId
+        siteId = operationalSiteId
+        const geofenceSiteId = target.geofenceSiteId ?? target.siteId
+        const operationalSiteName = getSiteNameFromEmployeeSites(operationalSiteId)
         location = target.location
         const policy = target.policy
 
@@ -1280,7 +1496,7 @@ export function useAttendance() {
           cached.canProceed &&
           !cached.requiresSelection &&
           cached.mode === mode &&
-          cached.siteId === siteId &&
+          cached.siteId === operationalSiteId &&
           cached.updatedAt != null &&
           now - cached.updatedAt <= attendancePolicy.geofence_ready_cache_ms
 
@@ -1293,7 +1509,7 @@ export function useAttendance() {
             canProceed: false,
             mode,
             lastUpdateSource: updateSource,
-            siteId,
+            siteId: operationalSiteId,
             message: "Verificando ubicación...",
             updatedAt: now,
             requiresSelection: false,
@@ -1302,7 +1518,7 @@ export function useAttendance() {
         }
 
         try {
-          const resolved = await resolveSite(siteId)
+          const resolved = await resolveSite(geofenceSiteId)
           if (!resolved.site) {
             const latched = canReuseRecentReadyGeofence(mode, siteId)
             if (latched) {
@@ -1313,7 +1529,7 @@ export function useAttendance() {
             }
             const next = buildGeofenceErrorState({
               mode,
-              siteId,
+              siteId: operationalSiteId,
               message: "No se pudo cargar la sede para verificar ubicación",
               updatedAt: now,
             })
@@ -1330,9 +1546,16 @@ export function useAttendance() {
             updatedAt: now,
           })
           if (preflightState) {
-            geofenceCacheRef.current = preflightState
-            setGeofenceState(preflightState)
-            return preflightState
+            const next = withOperationalGeofenceContext(preflightState, {
+              mode,
+              shift: shiftContext,
+              operationalSiteId,
+              operationalSiteName,
+              geofenceSiteId,
+            })
+            geofenceCacheRef.current = next
+            setGeofenceState(next)
+            return next
           }
 
           const effectiveRadius = Number(site.radiusMeters ?? 0)
@@ -1354,7 +1577,7 @@ export function useAttendance() {
                 isLikelyTransientGeoError(locationResult.error ?? null) ||
                 isLikelyOfflineError(locationResult.error ?? null)
               if (transientLocationIssue) {
-                const latched = canReuseRecentReadyGeofence(mode, site.id)
+                const latched = canReuseRecentReadyGeofence(mode, siteId)
                 if (latched) {
                   const next = buildLatchedReadyState(latched, updateSource, "location")
                   geofenceCacheRef.current = next
@@ -1362,16 +1585,25 @@ export function useAttendance() {
                   return next
                 }
               }
-              const next = buildGeofenceBlockedState({
-                mode,
-                siteId: site.id,
-                siteName: site.name,
-                effectiveRadiusMeters: effectiveRadius,
-                message: locationResult.error || "Ubicación requerida para continuar",
-                updatedAt: now,
-                location: locationResult.location ?? null,
-                deviceInfo: buildDeviceInfoPayload(locationResult.location ?? null),
-              })
+              const next = withOperationalGeofenceContext(
+                buildGeofenceBlockedState({
+                  mode,
+                  siteId: site.id,
+                  siteName: site.name,
+                  effectiveRadiusMeters: effectiveRadius,
+                  message: locationResult.error || "Ubicación requerida para continuar",
+                  updatedAt: now,
+                  location: locationResult.location ?? null,
+                  deviceInfo: buildDeviceInfoPayload(locationResult.location ?? null),
+                }),
+                {
+                  mode,
+                  shift: shiftContext,
+                  operationalSiteId,
+                  operationalSiteName,
+                  geofenceSiteId,
+                }
+              )
               geofenceCacheRef.current = next
               setGeofenceState(next)
               return next
@@ -1380,28 +1612,46 @@ export function useAttendance() {
           }
 
           if (!location) {
-            const next = buildGeofenceErrorState({
-              mode,
-              siteId: site.id,
-              siteName: site.name,
-              effectiveRadiusMeters: effectiveRadius,
-              message: "Ubicación requerida para continuar",
-              updatedAt: now,
-            })
+            const next = withOperationalGeofenceContext(
+              buildGeofenceErrorState({
+                mode,
+                siteId: site.id,
+                siteName: site.name,
+                effectiveRadiusMeters: effectiveRadius,
+                message: "Ubicación requerida para continuar",
+                updatedAt: now,
+              }),
+              {
+                mode,
+                shift: shiftContext,
+                operationalSiteId,
+                operationalSiteName,
+                geofenceSiteId,
+              }
+            )
             geofenceCacheRef.current = next
             setGeofenceState(next)
             return next
           }
 
-          const next = validateResolvedSiteGeofence({
-            mode,
-            site,
-            hasCoordinates: resolved.hasCoordinates,
-            policy,
-            updatedAt: now,
-            location,
-            buildDeviceInfoPayload,
-          })
+          const next = withOperationalGeofenceContext(
+            validateResolvedSiteGeofence({
+              mode,
+              site,
+              hasCoordinates: resolved.hasCoordinates,
+              policy,
+              updatedAt: now,
+              location,
+              buildDeviceInfoPayload,
+            }),
+            {
+              mode,
+              shift: shiftContext,
+              operationalSiteId,
+              operationalSiteName,
+              geofenceSiteId,
+            }
+          )
 
           geofenceCacheRef.current = next
           setGeofenceState(next)
@@ -1454,6 +1704,11 @@ export function useAttendance() {
       attendancePolicy.geofence_check_out_max_accuracy_meters,
       attendancePolicy.geofence_ready_cache_ms,
       getLastAttendanceLog,
+      getEffectiveLastAttendanceLog,
+      getPublishedShiftContext,
+      loadGeofenceSitesForShift,
+      seedGeofenceSiteResolveCache,
+      getSiteNameFromEmployeeSites,
       resolveSite,
       canReuseRecentReadyGeofence,
       buildLatchedReadyState,
@@ -1522,8 +1777,14 @@ export function useAttendance() {
       const deviceInfo = geo.deviceInfo
       const clientEventId = buildClientEventId("check_in")
 
-      const shiftId =
-        (await getTodayShiftIdForSite(user.id, geo.siteId)) ?? undefined
+      const shiftContext = await getPublishedShiftContext({
+        employeeId: user.id,
+        mode: "check_in",
+        operationalSiteId: geo.siteId,
+      })
+      const geofenceSiteId =
+        cleanOptionalId((deviceInfo as any)?.attendanceContext?.geofenceSiteId) ?? geo.siteId
+      const shiftId = shiftContext?.id ?? undefined
 
       const payload = buildAttendanceInsertPayload({
         employeeId: user.id,
@@ -1540,6 +1801,12 @@ export function useAttendance() {
         extraDeviceInfo: {
           attemptedAt: checkInAttemptedAt,
           geofenceConfirmedAt: new Date().toISOString(),
+          attendanceContext: buildShiftDeviceContext({
+            mode: "check_in",
+            shift: shiftContext,
+            operationalSiteId: geo.siteId,
+            geofenceSiteId,
+          }),
         },
       })
 
@@ -1577,8 +1844,15 @@ export function useAttendance() {
         canQueueByPolicy({ networkError: offline, latchValid, eventType: "check_in" })
       ) {
         const clientEventId = buildClientEventId("check_in")
-        const shiftId =
-          (await getTodayShiftIdForSite(user.id, lastGeo.siteId)) ?? undefined
+        const shiftContext = await getPublishedShiftContext({
+          employeeId: user.id,
+          mode: "check_in",
+          operationalSiteId: lastGeo.siteId,
+        })
+        const geofenceSiteId =
+          cleanOptionalId((lastGeo.deviceInfo as any)?.attendanceContext?.geofenceSiteId) ??
+          lastGeo.siteId
+        const shiftId = shiftContext?.id ?? undefined
         const queuedAt = new Date().toISOString()
 
         const payload = buildAttendanceInsertPayload({
@@ -1596,6 +1870,12 @@ export function useAttendance() {
           extraDeviceInfo: {
             attemptedAt: checkInAttemptedAt,
             queuedAt,
+            attendanceContext: buildShiftDeviceContext({
+              mode: "check_in",
+              shift: shiftContext,
+              operationalSiteId: lastGeo.siteId,
+              geofenceSiteId,
+            }),
           },
         })
         await enqueuePendingAttendanceEvent(payload, err)
@@ -1621,7 +1901,7 @@ export function useAttendance() {
     employee,
     pendingAttendanceQueue,
     getEffectiveLastAttendanceLog,
-    getTodayShiftIdForSite,
+    getPublishedShiftContext,
     refreshGeofence,
     canReuseRecentReadyGeofence,
     canQueueByPolicy,
@@ -1650,6 +1930,12 @@ export function useAttendance() {
 
     try {
       const siteIdToClose = lastLog.site_id
+      const shiftContext = await getPublishedShiftContext({
+        employeeId: user.id,
+        mode: "check_out",
+        operationalSiteId: siteIdToClose,
+        shiftId: lastLog.shift_id,
+      })
       const geo = await ensureActionGeofenceReady({
         mode: "check_out",
         refreshGeofence,
@@ -1669,6 +1955,10 @@ export function useAttendance() {
       const location = geo.location
       const deviceInfo = geo.deviceInfo
       const clientEventId = buildClientEventId("check_out")
+      const geofenceSiteId =
+        cleanOptionalId((deviceInfo as any)?.attendanceContext?.geofenceSiteId) ??
+        geo.siteId ??
+        siteIdToClose
 
       const payload = buildAttendanceInsertPayload({
         employeeId: user.id,
@@ -1680,7 +1970,16 @@ export function useAttendance() {
         accuracyMeters: location?.accuracy ?? null,
         deviceInfo,
         clientEventId,
-        shiftId: lastLog.shift_id,
+        shiftId: lastLog.shift_id ?? shiftContext?.id ?? null,
+        extraDeviceInfo: {
+          geofenceConfirmedAt: new Date().toISOString(),
+          attendanceContext: buildShiftDeviceContext({
+            mode: "check_out",
+            shift: shiftContext,
+            operationalSiteId: siteIdToClose,
+            geofenceSiteId,
+          }),
+        },
       })
 
       applyOptimisticAttendanceUpdate(payload, lastLog.site_name ?? null)
@@ -1744,6 +2043,7 @@ export function useAttendance() {
     user,
     employee,
     getEffectiveLastAttendanceLog,
+    getPublishedShiftContext,
     refreshGeofence,
     canReuseRecentReadyGeofence,
     canQueueByPolicy,
