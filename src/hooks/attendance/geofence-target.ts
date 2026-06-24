@@ -17,11 +17,44 @@ type LastAttendanceLog = {
 
 type UpdateSource = "auto" | "user" | "check_action";
 
+type ShiftGeofenceContext = {
+  /**
+   * Operational site for the shift. This is the business context stored as
+   * attendance_logs.site_id and used by apps such as NEXO.
+   */
+  operationalSiteId?: string | null;
+
+  /**
+   * Physical check-in point. For drivers this can be a hidden site such as the
+   * vehicle parking/pickup point.
+   */
+  checkInSiteId?: string | null;
+
+  /**
+   * Physical check-out point. Falls back to the operational site when empty.
+   */
+  checkOutSiteId?: string | null;
+};
+
 type ResolveGeofenceTargetArgs = {
   argsMode?: GeofenceMode;
   argsSiteId?: string | null;
   selectedSiteId?: string | null;
   employeeSites: EmployeeSiteLike[];
+
+  /**
+   * Extra geofence-only sites. These are intentionally separate from
+   * employeeSites so hidden check-in points do not appear as normal selectable
+   * operational sites.
+   */
+  geofenceSites?: EmployeeSiteLike[];
+
+  /**
+   * Optional shift context used to separate operational context from the
+   * physical geofence target.
+   */
+  shiftGeofenceContext?: ShiftGeofenceContext | null;
+
   lastLog: LastAttendanceLog;
   now: number;
   updateSource: UpdateSource;
@@ -55,6 +88,35 @@ type SelectionCandidate = {
   requiresGeolocation: boolean;
 };
 
+function asCleanId(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim();
+  return normalized || null;
+}
+
+function uniqueSites(sites: EmployeeSiteLike[]) {
+  const seen = new Set<string>();
+  const resolved: EmployeeSiteLike[] = [];
+
+  for (const site of sites) {
+    const siteId = asCleanId(site.siteId);
+
+    if (!siteId || seen.has(siteId)) continue;
+
+    seen.add(siteId);
+    resolved.push({
+      ...site,
+      siteId,
+    });
+  }
+
+  return resolved;
+}
+
+function findSite(sites: EmployeeSiteLike[], siteId: string | null) {
+  if (!siteId) return null;
+  return sites.find((site) => site.siteId === siteId) ?? null;
+}
+
 function getCandidatesInsideRange(candidates: SelectionCandidate[]) {
   return candidates
     .filter((candidate) => {
@@ -70,11 +132,53 @@ function getCandidatesInsideRange(candidates: SelectionCandidate[]) {
     });
 }
 
+function resolveExplicitGeofenceSiteId({
+  mode,
+  shiftGeofenceContext,
+}: {
+  mode: GeofenceMode;
+  shiftGeofenceContext?: ShiftGeofenceContext | null;
+}) {
+  if (!shiftGeofenceContext) return null;
+
+  if (mode === "check_out") {
+    return asCleanId(shiftGeofenceContext.checkOutSiteId);
+  }
+
+  return asCleanId(shiftGeofenceContext.checkInSiteId);
+}
+
+function resolveOperationalSiteId({
+  mode,
+  explicitOperationalSiteId,
+  argsSiteId,
+  selectedSiteId,
+  lastLog,
+  fallbackGeofenceSiteId,
+}: {
+  mode: GeofenceMode;
+  explicitOperationalSiteId: string | null;
+  argsSiteId: string | null;
+  selectedSiteId: string | null;
+  lastLog: LastAttendanceLog;
+  fallbackGeofenceSiteId: string | null;
+}) {
+  if (explicitOperationalSiteId) return explicitOperationalSiteId;
+
+  if (mode === "check_out") {
+    return asCleanId(lastLog?.site_id) ?? argsSiteId ?? fallbackGeofenceSiteId;
+  }
+
+  return argsSiteId ?? selectedSiteId ?? fallbackGeofenceSiteId;
+}
+
 export async function resolveGeofenceTarget({
   argsMode,
   argsSiteId,
   selectedSiteId,
   employeeSites,
+  geofenceSites = [],
+  shiftGeofenceContext,
   lastLog,
   now,
   updateSource,
@@ -89,7 +193,18 @@ export async function resolveGeofenceTarget({
     | {
         kind: "resolved";
         mode: GeofenceMode;
+
+        /**
+         * Operational site. This should be persisted as attendance_logs.site_id.
+         */
         siteId: string;
+
+        /**
+         * Physical geofence target. This should be used for distance validation
+         * and persisted as attendance_logs.geofence_site_id.
+         */
+        geofenceSiteId: string;
+
         policy: { maxAccuracyMeters: number };
         location: ValidatedLocation | null;
       }
@@ -106,33 +221,109 @@ export async function resolveGeofenceTarget({
       : checkInMaxAccuracyMeters;
   const policy = { maxAccuracyMeters };
 
-  const assignedGeoSites = employeeSites.filter(
+  const normalizedEmployeeSites = uniqueSites(employeeSites);
+  const normalizedGeofenceSites = uniqueSites([
+    ...normalizedEmployeeSites,
+    ...geofenceSites,
+  ]);
+
+  const explicitGeofenceSiteId = resolveExplicitGeofenceSiteId({
+    mode,
+    shiftGeofenceContext,
+  });
+  const explicitOperationalSiteId = asCleanId(
+    shiftGeofenceContext?.operationalSiteId,
+  );
+  const cleanArgsSiteId = asCleanId(argsSiteId);
+  const cleanSelectedSiteId = asCleanId(selectedSiteId);
+
+  if (explicitGeofenceSiteId) {
+    const explicitGeofenceSite = findSite(
+      normalizedGeofenceSites,
+      explicitGeofenceSiteId,
+    );
+
+    if (!explicitGeofenceSite) {
+      return {
+        kind: "blocked",
+        state: buildGeofenceBlockedState({
+          mode,
+          lastUpdateSource: updateSource,
+          message: "No se encontró el punto de marcación asignado al turno.",
+          updatedAt: now,
+          location,
+          deviceInfo: buildDeviceInfoPayload(location, {
+            geofenceSiteId: explicitGeofenceSiteId,
+            operationalSiteId: explicitOperationalSiteId,
+            reason: "missing_shift_geofence_site",
+          }),
+        }),
+      };
+    }
+
+    const operationalSiteId = resolveOperationalSiteId({
+      mode,
+      explicitOperationalSiteId,
+      argsSiteId: cleanArgsSiteId,
+      selectedSiteId: cleanSelectedSiteId,
+      lastLog,
+      fallbackGeofenceSiteId: explicitGeofenceSiteId,
+    });
+
+    if (!operationalSiteId) {
+      return {
+        kind: "blocked",
+        state: buildGeofenceBlockedState({
+          mode,
+          lastUpdateSource: updateSource,
+          message: "No se encontró la sede operativa del turno.",
+          updatedAt: now,
+          location,
+          deviceInfo: buildDeviceInfoPayload(location, {
+            geofenceSiteId: explicitGeofenceSiteId,
+            reason: "missing_shift_operational_site",
+          }),
+        }),
+      };
+    }
+
+    return {
+      kind: "resolved",
+      mode,
+      siteId: operationalSiteId,
+      geofenceSiteId: explicitGeofenceSite.siteId,
+      policy,
+      location,
+    };
+  }
+
+  const assignedGeoSites = normalizedEmployeeSites.filter(
     (item) => item.latitude != null && item.longitude != null,
   );
-  const assignedNonGeoSites = employeeSites.filter(
+  const assignedNonGeoSites = normalizedEmployeeSites.filter(
     (item) => item.latitude == null || item.longitude == null,
   );
 
   const selectedSiteIsValid =
-    selectedSiteId != null &&
-    employeeSites.some((item) => item.siteId === selectedSiteId);
-  const effectiveSelectedSiteId = selectedSiteIsValid ? selectedSiteId : null;
+    cleanSelectedSiteId != null &&
+    normalizedEmployeeSites.some((item) => item.siteId === cleanSelectedSiteId);
+  const effectiveSelectedSiteId = selectedSiteIsValid ? cleanSelectedSiteId : null;
 
   let siteId: string | null = null;
 
   if (mode === "check_out") {
-    siteId = argsSiteId ?? lastLog?.site_id ?? null;
+    siteId = cleanArgsSiteId ?? asCleanId(lastLog?.site_id);
   } else {
-    if (argsSiteId) {
-      siteId = argsSiteId;
-    } else if (employeeSites.length > 1) {
+    if (cleanArgsSiteId) {
+      siteId = cleanArgsSiteId;
+    } else if (normalizedEmployeeSites.length > 1) {
       if (effectiveSelectedSiteId) {
         siteId = effectiveSelectedSiteId;
 
         const selectionLocation =
           await resolveBestEffortSelectionLocation(location);
         const candidates = buildSelectionCandidates(
-          employeeSites,
+          normalizedEmployeeSites,
           selectionLocation ?? null,
         );
         const selectedCandidate = candidates.find(
@@ -156,7 +347,7 @@ export async function resolveGeofenceTarget({
         const selectionLocation =
           await resolveBestEffortSelectionLocation(location);
         const candidates = buildSelectionCandidates(
-          employeeSites,
+          normalizedEmployeeSites,
           selectionLocation ?? null,
         );
         const insideRange = getCandidatesInsideRange(candidates);
@@ -185,8 +376,8 @@ export async function resolveGeofenceTarget({
           };
         }
       }
-    } else if (employeeSites.length === 1) {
-      siteId = employeeSites[0].siteId;
+    } else if (normalizedEmployeeSites.length === 1) {
+      siteId = normalizedEmployeeSites[0].siteId;
     } else if (assignedGeoSites.length === 1) {
       siteId = assignedGeoSites[0].siteId;
     } else if (assignedNonGeoSites.length === 1) {
@@ -210,6 +401,7 @@ export async function resolveGeofenceTarget({
     kind: "resolved",
     mode,
     siteId,
+    geofenceSiteId: siteId,
     policy,
     location,
   };

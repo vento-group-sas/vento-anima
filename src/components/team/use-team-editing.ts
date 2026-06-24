@@ -252,6 +252,11 @@ export function useTeamEditing({
       return;
     }
 
+    if (isSelf && form.isActive === false) {
+      Alert.alert("Equipo", "No puedes desactivar tu propio usuario.");
+      return;
+    }
+
     let primarySiteId =
       form.primarySiteId ?? form.siteIds[0] ?? editingEmployee.site_id ?? null;
 
@@ -283,6 +288,12 @@ export function useTeamEditing({
         .eq("id", editingEmployee.id);
 
       if (error) throw error;
+
+      if (form.isActive === false) {
+        await loadEmployees();
+        closeEdit();
+        return;
+      }
 
       if (!isManager) {
         await saveEmployeeSites(editingEmployee.id, form.siteIds, primarySiteId);
