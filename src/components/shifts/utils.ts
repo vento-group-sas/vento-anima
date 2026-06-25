@@ -18,6 +18,10 @@ export type ShiftRow = {
   notes: string | null;
   status: ShiftStatus;
   site_id: string;
+  area_id?: string | null;
+  operational_role?: string | null;
+  checkin_site_id?: string | null;
+  checkout_site_id?: string | null;
   sites: { name: string | null } | { name: string | null }[] | null;
 };
 

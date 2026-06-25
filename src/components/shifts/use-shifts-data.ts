@@ -161,7 +161,7 @@ export function useShiftsData({
         let query = supabase
           .from("employee_shifts")
           .select(
-            "id, employee_id, shift_date, start_time, end_time, shift_kind, show_end_as_close, break_minutes, notes, status, site_id, sites(name), published_at, employees!employee_shifts_employee_id_fkey(full_name)",
+            "id, employee_id, shift_date, start_time, end_time, shift_kind, show_end_as_close, break_minutes, notes, status, site_id, area_id, operational_role, checkin_site_id, checkout_site_id, sites(name), published_at, employees!employee_shifts_employee_id_fkey(full_name)",
           )
           .eq("site_id", managerSiteId)
           .gte("shift_date", getDateOffset(-7))
@@ -207,7 +207,7 @@ export function useShiftsData({
         const { data, error } = await supabase
           .from("employee_shifts")
           .select(
-            "id, shift_date, start_time, end_time, shift_kind, show_end_as_close, break_minutes, notes, status, site_id, sites(name)",
+            "id, shift_date, start_time, end_time, shift_kind, show_end_as_close, break_minutes, notes, status, site_id, area_id, operational_role, checkin_site_id, checkout_site_id, sites(name)",
           )
           .eq("employee_id", userId)
           .not("published_at", "is", null)

@@ -1789,6 +1789,7 @@ export function useAttendance() {
       const payload = buildAttendanceInsertPayload({
         employeeId: user.id,
         siteId: geo.siteId,
+        geofenceSiteId,
         action: "check_in",
         source: getAttendanceSource(),
         latitude: location?.latitude ?? null,
@@ -1858,6 +1859,7 @@ export function useAttendance() {
         const payload = buildAttendanceInsertPayload({
           employeeId: user.id,
           siteId: lastGeo.siteId,
+          geofenceSiteId,
           action: "check_in",
           source: getAttendanceSource(),
           latitude: lastGeo.location?.latitude ?? null,
@@ -1963,6 +1965,7 @@ export function useAttendance() {
       const payload = buildAttendanceInsertPayload({
         employeeId: user.id,
         siteId: siteIdToClose,
+        geofenceSiteId,
         action: "check_out",
         source: getAttendanceSource(),
         latitude: location?.latitude ?? null,

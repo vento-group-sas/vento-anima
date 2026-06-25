@@ -157,6 +157,7 @@ export type AttendanceBreakRow = {
 export type AttendanceInsertPayload = {
   employee_id: string;
   site_id: string;
+  geofence_site_id?: string | null;
   action: "check_in" | "check_out";
   source: string;
   latitude: number | null;

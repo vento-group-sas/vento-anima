@@ -7,6 +7,7 @@ import type {
 type BuildAttendanceInsertPayloadArgs = {
   employeeId: string;
   siteId: string;
+  geofenceSiteId?: string | null;
   action: "check_in" | "check_out";
   source: string;
   latitude?: number | null;
@@ -23,6 +24,7 @@ type BuildAttendanceInsertPayloadArgs = {
 export function buildAttendanceInsertPayload({
   employeeId,
   siteId,
+  geofenceSiteId,
   action,
   source,
   latitude = null,
@@ -38,6 +40,7 @@ export function buildAttendanceInsertPayload({
   const payload: AttendanceInsertPayload = {
     employee_id: employeeId,
     site_id: siteId,
+    geofence_site_id: geofenceSiteId ?? siteId,
     action,
     source,
     latitude,

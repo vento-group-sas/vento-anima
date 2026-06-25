@@ -27,7 +27,7 @@ export function useNextScheduledShift(userId: string | null | undefined) {
       const { data, error } = await supabase
         .from("employee_shifts")
         .select(
-          "id, shift_date, start_time, end_time, shift_kind, show_end_as_close, break_minutes, notes, status, site_id, sites(name)",
+          "id, shift_date, start_time, end_time, shift_kind, show_end_as_close, break_minutes, notes, status, site_id, area_id, operational_role, checkin_site_id, checkout_site_id, sites(name)",
         )
         .eq("employee_id", userId)
         .not("published_at", "is", null)
