@@ -1,6 +1,12 @@
 import { getShiftDurationMinutes, type ShiftKind } from "./utils";
 
-export type SiteOption = { id: string; name: string };
+export type SiteOption = {
+  id: string;
+  name: string;
+  site_type?: string | null;
+  type?: string | null;
+  operational_visibility?: string | null;
+};
 export type EmployeeOption = { id: string; full_name: string | null };
 
 export type ShiftFormState = {

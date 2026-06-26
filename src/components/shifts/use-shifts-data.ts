@@ -10,6 +10,15 @@ import {
 import type { EmployeeOption, SiteOption } from "@/components/shifts/shift-form";
 import type { ShiftForEdit } from "@/components/shifts/EditShiftModal";
 
+const OPERATIONAL_SITE_TYPES = new Set(["satellite", "production_center"]);
+
+function isOperationalSite(site: SiteOption) {
+  if (site.operational_visibility === "hidden") return false;
+  if (site.type === "checkin_point") return false;
+  if (!site.site_type) return true;
+  return OPERATIONAL_SITE_TYPES.has(site.site_type);
+}
+
 function getDateOffset(days: number) {
   const date = new Date();
   date.setHours(12, 0, 0, 0);
@@ -106,14 +115,14 @@ export function useShiftsData({
       try {
         let sitesQuery = supabase
           .from("sites")
-          .select("id, name")
+          .select("id, name, site_type, type, operational_visibility")
           .eq("is_active", true)
           .order("name", { ascending: true });
         if (employeeRole === "gerente" && managerSiteId) {
           sitesQuery = sitesQuery.eq("id", managerSiteId);
         }
         const { data: sitesData } = await sitesQuery;
-        setManagerSites((sitesData as SiteOption[]) ?? []);
+        setManagerSites(((sitesData as SiteOption[]) ?? []).filter(isOperationalSite));
 
         let empQuery = supabase
           .from("employees")

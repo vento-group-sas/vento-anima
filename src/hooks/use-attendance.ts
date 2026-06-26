@@ -222,7 +222,7 @@ function withOperationalGeofenceContext(
   return {
     ...state,
     siteId: args.operationalSiteId,
-    siteName: args.operationalSiteName ?? state.siteName,
+    siteName: state.siteName ?? args.operationalSiteName,
     deviceInfo: {
       ...(state.deviceInfo ?? {}),
       attendanceContext: buildShiftDeviceContext({
