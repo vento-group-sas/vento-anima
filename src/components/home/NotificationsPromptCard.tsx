@@ -5,13 +5,17 @@ import { PALETTE, RGBA } from "@/components/home/theme"
 
 type NotificationsPromptCardProps = {
   isLoading: boolean
+  mode?: "permission" | "token"
   onPress: () => void
 }
 
 export function NotificationsPromptCard({
   isLoading,
+  mode = "permission",
   onPress,
 }: NotificationsPromptCardProps) {
+  const isTokenRepair = mode === "token"
+
   return (
     <TouchableOpacity
       onPress={onPress}
@@ -45,10 +49,12 @@ export function NotificationsPromptCard({
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={{ fontSize: 15, fontWeight: "800", color: PALETTE.text }}>
-          Activa las notificaciones
+          {isTokenRepair ? "Repara las notificaciones" : "Activa las notificaciones"}
         </Text>
         <Text style={{ fontSize: 13, color: PALETTE.neutral, marginTop: 2 }}>
-          Para recibir avisos de turnos y del equipo
+          {isTokenRepair
+            ? "El permiso esta activo, falta registrar el token"
+            : "Para recibir avisos de turnos y del equipo"}
         </Text>
       </View>
       <View
@@ -68,7 +74,7 @@ export function NotificationsPromptCard({
             color: isLoading ? PALETTE.neutral : PALETTE.accent,
           }}
         >
-          {isLoading ? "..." : "Activar"}
+          {isLoading ? "..." : isTokenRepair ? "Reparar" : "Activar"}
         </Text>
       </View>
     </TouchableOpacity>

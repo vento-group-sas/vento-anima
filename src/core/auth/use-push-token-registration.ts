@@ -1,9 +1,9 @@
-import { useEffect, useRef } from "react"
-import { Platform } from "react-native"
+import { useCallback, useEffect, useRef } from "react"
+import { AppState } from "react-native"
 import * as Device from "expo-device"
 import * as Notifications from "expo-notifications"
 
-import { supabase } from "@/lib/supabase"
+import { getOwnPushTokenStatus, syncRegisteredPushToken } from "@/core/notifications/push-token"
 
 type PushTokenRegistrationArgs = {
   userId: string | null | undefined
@@ -15,37 +15,52 @@ export function usePushTokenRegistration({
   expoProjectId,
 }: PushTokenRegistrationArgs) {
   const pushSyncInFlightRef = useRef(false)
+  const lastSuccessfulSyncAtRef = useRef(0)
+
+  const syncPushToken = useCallback(async () => {
+    if (!userId) return
+    if (!Device.isDevice) return
+    if (pushSyncInFlightRef.current) return
+
+    pushSyncInFlightRef.current = true
+    try {
+      const permissions = await Notifications.getPermissionsAsync()
+      if (permissions.status !== "granted") return
+
+      const status = await getOwnPushTokenStatus(userId)
+      if (status.hasActiveToken && Date.now() - lastSuccessfulSyncAtRef.current < 6 * 60 * 60 * 1000) {
+        return
+      }
+
+      const result = await syncRegisteredPushToken({ userId, expoProjectId })
+      if (result.ok) {
+        lastSuccessfulSyncAtRef.current = Date.now()
+      } else {
+        console.warn("[AUTH] Push token sync incomplete:", result.message)
+      }
+    } catch (err) {
+      console.warn("[AUTH] Push token sync skipped:", err)
+    } finally {
+      pushSyncInFlightRef.current = false
+    }
+  }, [expoProjectId, userId])
 
   useEffect(() => {
-    const syncPushToken = async () => {
-      if (!userId) return
-      if (!Device.isDevice) return
-      if (pushSyncInFlightRef.current) return
+    void syncPushToken()
+  }, [syncPushToken])
 
-      pushSyncInFlightRef.current = true
-      try {
-        const permissions = await Notifications.getPermissionsAsync()
-        if (permissions.status !== "granted") return
-
-        const tokenResult = await Notifications.getExpoPushTokenAsync({
-          projectId: expoProjectId,
-        })
-        const token = tokenResult.data
-        if (!token) return
-
-        await supabase.functions.invoke("register-push-token", {
-          body: {
-            token,
-            platform: Platform.OS,
-          },
-        })
-      } catch (err) {
-        console.warn("[AUTH] Push token sync skipped:", err)
-      } finally {
-        pushSyncInFlightRef.current = false
-      }
+  useEffect(() => {
+    if (!userId) {
+      lastSuccessfulSyncAtRef.current = 0
+      return
     }
 
-    void syncPushToken()
-  }, [userId, expoProjectId])
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "active") {
+        void syncPushToken()
+      }
+    })
+
+    return () => sub.remove()
+  }, [syncPushToken, userId])
 }

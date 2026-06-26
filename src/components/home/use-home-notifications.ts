@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { Alert, Linking, Platform } from "react-native"
+import { Alert, Linking } from "react-native"
 import { useFocusEffect } from "@react-navigation/native"
 import * as Device from "expo-device"
 import * as Notifications from "expo-notifications"
 
 import { ANIMA_COPY } from "@/brand/anima/copy/app-copy"
-import { supabase } from "@/lib/supabase"
+import { getOwnPushTokenStatus, syncRegisteredPushToken } from "@/core/notifications/push-token"
 
 export type NotificationPermissionStatus =
   | "granted"
@@ -42,38 +42,47 @@ export function useHomeNotifications({
   const [notificationPermissionStatus, setNotificationPermissionStatus] =
     useState<NotificationPermissionStatus>("unknown")
   const [notificationPromptLoading, setNotificationPromptLoading] = useState(false)
+  const [hasActivePushToken, setHasActivePushToken] = useState<boolean | null>(null)
+
+  const refreshPushTokenStatus = useCallback(async () => {
+    if (!userId) {
+      setHasActivePushToken(null)
+      return
+    }
+    try {
+      const status = await getOwnPushTokenStatus(userId)
+      setHasActivePushToken(status.hasActiveToken)
+    } catch (err) {
+      console.warn("[HOME] Push token status failed:", err)
+      setHasActivePushToken(null)
+    }
+  }, [userId])
 
   const syncPushToken = useCallback(async () => {
-    if (!userId || !Device.isDevice) return
-    try {
-      const tokenResult = await Notifications.getExpoPushTokenAsync({
-        projectId: expoProjectId,
-      })
-      const token = tokenResult.data
-      if (!token) return
-
-      const { error } = await supabase.functions.invoke("register-push-token", {
-        body: {
-          token,
-          platform: Platform.OS,
-        },
-      })
-      if (error) {
-        console.warn("[HOME] register-push-token error:", error)
-      }
-    } catch (err) {
-      console.warn("[HOME] Push token sync failed:", err)
+    if (!userId || !Device.isDevice) return false
+    const result = await syncRegisteredPushToken({ userId, expoProjectId })
+    if (!result.ok) {
+      console.warn("[HOME] Push token sync failed:", result.message)
     }
-  }, [userId, expoProjectId])
+    await refreshPushTokenStatus()
+    return result.ok
+  }, [expoProjectId, refreshPushTokenStatus, userId])
 
   const refreshNotificationPermission = useCallback(async () => {
     try {
       const perm = await Notifications.getPermissionsAsync()
-      setNotificationPermissionStatus(mapPermissionStatus(perm.status))
+      const status = mapPermissionStatus(perm.status)
+      setNotificationPermissionStatus(status)
+      if (status === "granted") {
+        await refreshPushTokenStatus()
+      } else {
+        setHasActivePushToken(null)
+      }
     } catch {
       setNotificationPermissionStatus("unknown")
+      setHasActivePushToken(null)
     }
-  }, [])
+  }, [refreshPushTokenStatus])
 
   useFocusEffect(
     useCallback(() => {
@@ -91,8 +100,14 @@ export function useHomeNotifications({
       const canAsk = typeof current.canAskAgain === "boolean" ? current.canAskAgain : null
 
       if (status === "granted") {
-        await syncPushToken()
+        const synced = await syncPushToken()
         await refreshNotificationPermission()
+        if (!synced) {
+          Alert.alert(
+            "Token pendiente",
+            "Las notificaciones estan activas, pero falta guardar el token. Reintenta con buena conexion.",
+          )
+        }
         return
       }
 
@@ -112,8 +127,13 @@ export function useHomeNotifications({
       const { status: asked } = await Notifications.requestPermissionsAsync()
       await refreshNotificationPermission()
       if (asked === "granted") {
-        await syncPushToken()
-        Alert.alert("Listo", ANIMA_COPY.notificationsEnabledBody)
+        const synced = await syncPushToken()
+        Alert.alert(
+          synced ? "Listo" : "Token pendiente",
+          synced
+            ? ANIMA_COPY.notificationsEnabledBody
+            : "El permiso quedo activo, pero falta guardar el token. Toca Reparar notificaciones en unos segundos.",
+        )
       } else if (asked === "denied") {
         const again = await Notifications.getPermissionsAsync()
         const canAskAgain = typeof again.canAskAgain === "boolean" ? again.canAskAgain : null
@@ -156,7 +176,10 @@ export function useHomeNotifications({
         try {
           const permissions = await Notifications.getPermissionsAsync()
           if (permissions.status === "granted") {
-            await syncPushToken()
+            const status = await getOwnPushTokenStatus(userId)
+            if (!status.hasActiveToken) {
+              await syncPushToken()
+            }
             return
           }
           if (permissions.status === "undetermined") {
@@ -185,6 +208,7 @@ export function useHomeNotifications({
   return {
     notificationPermissionStatus,
     notificationPromptLoading,
+    hasActivePushToken,
     requestNotificationPermissionOrOpenSettings,
   }
 }

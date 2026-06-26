@@ -224,6 +224,7 @@ export default function HomeScreen() {
   const {
     notificationPermissionStatus,
     notificationPromptLoading,
+    hasActivePushToken,
     requestNotificationPermissionOrOpenSettings,
   } = useHomeNotifications({
     userId: user?.id,
@@ -559,9 +560,10 @@ export default function HomeScreen() {
           }}
         />
 
-        {user && notificationPermissionStatus !== "granted" ? (
+        {user && (notificationPermissionStatus !== "granted" || hasActivePushToken === false) ? (
           <NotificationsPromptCard
             isLoading={notificationPromptLoading}
+            mode={notificationPermissionStatus === "granted" ? "token" : "permission"}
             onPress={requestNotificationPermissionOrOpenSettings}
           />
         ) : null}

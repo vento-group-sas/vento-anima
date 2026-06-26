@@ -28,6 +28,7 @@ type EmployeeRow = Record<string, any>;
 type ShiftRow = Record<string, any>;
 type SiteRow = Record<string, any>;
 type PushTokenRow = Record<string, any>;
+type PushTokenCoverageRow = Record<string, any>;
 type LastAttendanceLogRow = Record<string, any>;
 
 type DeviceLocation = {
@@ -44,6 +45,7 @@ type DiagnosticState = {
   sitesById: Record<string, SiteRow>;
   lastAttendanceLog: LastAttendanceLogRow | null;
   tokenRows: PushTokenRow[];
+  pushTokenCoverageRows: PushTokenCoverageRow[];
   error: string | null;
 };
 
@@ -327,6 +329,7 @@ export default function AnimaDiagnosticsScreen() {
     sitesById: {},
     lastAttendanceLog: null,
     tokenRows: [],
+    pushTokenCoverageRows: [],
     error: null,
   });
 
@@ -354,7 +357,7 @@ export default function AnimaDiagnosticsScreen() {
       const selectedEmployee =
         employees.find((row: EmployeeRow) => cleanId(row.id) === targetEmployeeId) ?? null;
 
-      const [shiftsResult, lastLogResult, tokensResult] = await Promise.all([
+      const [shiftsResult, lastLogResult, tokensResult, tokenCoverageResult] = await Promise.all([
         supabase
           .from("employee_shifts")
           .select("*")
@@ -372,16 +375,16 @@ export default function AnimaDiagnosticsScreen() {
           .order("created_at", { ascending: false })
           .limit(1)
           .maybeSingle(),
-        supabase
-          .from("employee_push_tokens")
-          .select("*")
-          .eq("employee_id", targetEmployeeId)
-          .order("updated_at", { ascending: false }),
+        supabase.rpc("anima_diagnostic_employee_push_tokens", {
+          p_employee_id: targetEmployeeId,
+        }),
+        supabase.rpc("anima_diagnostic_push_token_coverage"),
       ]);
 
       if (shiftsResult.error) throw shiftsResult.error;
       if (lastLogResult.error) throw lastLogResult.error;
       if (tokensResult.error) throw tokensResult.error;
+      if (tokenCoverageResult.error) throw tokenCoverageResult.error;
 
       const shifts = shiftsResult.data ?? [];
       const siteIds = uniqueIds(
@@ -415,6 +418,7 @@ export default function AnimaDiagnosticsScreen() {
         sitesById,
         lastAttendanceLog: lastLogResult.data ?? null,
         tokenRows: tokensResult.data ?? [],
+        pushTokenCoverageRows: tokenCoverageResult.data ?? [],
         error: null,
       });
     } catch (err) {
@@ -494,6 +498,16 @@ export default function AnimaDiagnosticsScreen() {
 
   const activeTokens = state.tokenRows.filter((row) => row.is_active === true);
   const latestToken = state.tokenRows[0] ?? null;
+  const employeesWithActivePushToken = state.pushTokenCoverageRows.filter(
+    (row) => row.has_active_token === true,
+  );
+  const employeesWithoutActivePushToken = state.pushTokenCoverageRows.filter(
+    (row) => row.has_active_token !== true,
+  );
+  const missingPushTokenPreview = employeesWithoutActivePushToken
+    .slice(0, 8)
+    .map((row) => row.full_name ?? row.alias ?? row.employee_id)
+    .join(", ");
   const operationalRole = getOperationalRole(selectedShift, state.selectedEmployee);
   const isConductorLike = String(operationalRole).toLowerCase().includes("conductor");
   const hasDifferentCheckInSite =
@@ -760,6 +774,7 @@ export default function AnimaDiagnosticsScreen() {
 
           <InfoRow label="Tokens activos" value={String(activeTokens.length)} strong />
           <InfoRow label="Última actualización" value={formatDateTime(latestToken?.updated_at ?? latestToken?.created_at)} />
+          <InfoRow label="Token" value={latestToken?.token_preview ?? "Sin token"} />
           <InfoRow
             label="Resultado"
             value={
@@ -768,6 +783,35 @@ export default function AnimaDiagnosticsScreen() {
                 : "Este usuario tiene permisos posibles, pero no hay token activo registrado."
             }
           />
+        </View>
+
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <Text style={styles.cardTitle}>Cobertura de tokens</Text>
+            <StatusPill
+              label={`${employeesWithActivePushToken.length}/${state.pushTokenCoverageRows.length} activos`}
+              tone={employeesWithoutActivePushToken.length === 0 ? "ok" : "warn"}
+            />
+          </View>
+
+          <InfoRow
+            label="Trabajadores activos con token"
+            value={String(employeesWithActivePushToken.length)}
+            strong
+          />
+          <InfoRow
+            label="Trabajadores activos sin token"
+            value={String(employeesWithoutActivePushToken.length)}
+            strong
+          />
+          <InfoRow
+            label="Primeros pendientes"
+            value={missingPushTokenPreview || "Sin pendientes"}
+          />
+          <Text style={styles.helpText}>
+            Para recuperar un token faltante, el trabajador debe abrir ANIMA con internet. Si el permiso ya esta activo,
+            Home mostrara Reparar notificaciones y tambien intentara registrarlo automaticamente.
+          </Text>
         </View>
 
         <View style={styles.card}>
@@ -820,7 +864,8 @@ export default function AnimaDiagnosticsScreen() {
             <TechnicalBlock title="Turno seleccionado" value={selectedShift} />
             <TechnicalBlock title="Sedes cargadas" value={state.sitesById} />
             <TechnicalBlock title="Último attendance_logs" value={state.lastAttendanceLog} />
-            <TechnicalBlock title="Tokens push" value={state.tokenRows} />
+            <TechnicalBlock title="Tokens push (enmascarados)" value={state.tokenRows} />
+            <TechnicalBlock title="Cobertura tokens push" value={state.pushTokenCoverageRows} />
           </>
         ) : null}
       </ScrollView>

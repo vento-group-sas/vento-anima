@@ -15,49 +15,26 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import * as Device from "expo-device";
 import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
 
 import { COLORS } from "@/constants/colors";
-import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/auth-context";
 import { useAccountDeletion } from "@/hooks/useAccountDeletion";
 import { DataCleanupFlow } from "@/components/settings/DataCleanupFlow";
 import { DeleteAccountFlow } from "@/components/settings/DeleteAccountFlow";
 import { ANIMA_COPY } from "@/brand/anima/copy/app-copy";
 import { ANIMA_RUNTIME } from "@/brand/anima/config/runtime";
+import { syncRegisteredPushToken, type PushTokenSyncResult } from "@/core/notifications/push-token";
 
 type SettingsSection = "permissions" | "privacy" | "account";
 type PermissionState = "granted" | "denied" | "undetermined" | "unknown";
-type PushTokenSyncResult = { ok: boolean; message: string };
 
 const EXPO_PROJECT_ID = ANIMA_RUNTIME.expoProjectId;
-const PUSH_TOKEN_MAX_ATTEMPTS = 3;
-const PUSH_TOKEN_TIMEOUT_MS = 10000;
 const QA_ALLOWED_EMAILS = new Set(["carlosaaibarra@gmail.com"]);
 
 function canAccessAnimaDiagnostics(email: string | null | undefined) {
   return QA_ALLOWED_EMAILS.has(String(email ?? "").trim().toLowerCase());
-}
-
-function wait(ms: number) {
-  return new Promise<void>((resolve) => setTimeout(resolve, ms));
-}
-
-async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutHandle = setTimeout(() => {
-      reject(new Error(`${label} timeout`));
-    }, ms);
-  });
-
-  try {
-    return await Promise.race([promise, timeoutPromise]);
-  } finally {
-    if (timeoutHandle) clearTimeout(timeoutHandle);
-  }
 }
 
 const SECTION_TABS: Array<{ key: SettingsSection; label: string; icon: keyof typeof Ionicons.glyphMap }> = [
@@ -169,83 +146,19 @@ export default function AccountSettingsScreen() {
 
   const syncPushToken = useCallback(async (): Promise<PushTokenSyncResult> => {
     if (!user?.id) {
-      return { ok: false, message: "No hay sesión activa." };
+      return { ok: false, message: "No hay sesion activa." };
     }
 
-    if (!Device.isDevice) {
-      return { ok: false, message: "La validación requiere un dispositivo físico." };
+    const result = await syncRegisteredPushToken({
+      userId: user.id,
+      expoProjectId: EXPO_PROJECT_ID,
+    });
+
+    if (!result.ok) {
+      console.warn("[SETTINGS] Push token sync failed after retries:", result.message);
     }
 
-    let lastError = "No se pudo registrar el token de notificaciones.";
-
-    for (let attempt = 1; attempt <= PUSH_TOKEN_MAX_ATTEMPTS; attempt += 1) {
-      try {
-        const tokenResult = await withTimeout(
-          Notifications.getExpoPushTokenAsync({ projectId: EXPO_PROJECT_ID }),
-          PUSH_TOKEN_TIMEOUT_MS,
-          "getExpoPushTokenAsync",
-        );
-        const token = tokenResult.data?.trim();
-        if (!token) {
-          lastError = "El dispositivo no devolvió token.";
-          continue;
-        }
-
-        const registerResult = await withTimeout(
-          supabase.functions.invoke("register-push-token", {
-            body: {
-              token,
-              platform: Device.osName?.toLowerCase() ?? "unknown",
-            },
-          }),
-          PUSH_TOKEN_TIMEOUT_MS,
-          "register-push-token",
-        );
-        const registerError = (registerResult as { error?: { message?: string } | null }).error;
-
-        if (registerError) {
-          lastError = registerError.message || "Error guardando token en backend.";
-          continue;
-        }
-
-        const verifyResult = await withTimeout(
-          Promise.resolve(
-            supabase
-              .from("employee_push_tokens")
-              .select("token, is_active")
-              .eq("employee_id", user.id)
-              .eq("token", token)
-              .maybeSingle(),
-          ),
-          PUSH_TOKEN_TIMEOUT_MS,
-          "verify-token",
-        );
-        const savedToken = (verifyResult as { data?: { token?: string; is_active?: boolean } | null })
-          .data;
-        const verifyError = (verifyResult as { error?: { message?: string } | null }).error;
-
-        if (verifyError) {
-          lastError = verifyError.message || "No se pudo verificar el token.";
-          continue;
-        }
-
-        if (!savedToken || savedToken.is_active !== true) {
-          lastError = "El token no quedó activo para este usuario.";
-          continue;
-        }
-
-        return { ok: true, message: "Token registrado y verificado correctamente." };
-      } catch (err) {
-        lastError = err instanceof Error ? err.message : "Error inesperado registrando token.";
-      }
-
-      if (attempt < PUSH_TOKEN_MAX_ATTEMPTS) {
-        await wait(700 * attempt);
-      }
-    }
-
-    console.warn("[SETTINGS] Push token sync failed after retries:", lastError);
-    return { ok: false, message: lastError };
+    return result;
   }, [user?.id]);
 
   const openSystemSettings = useCallback(async () => {
