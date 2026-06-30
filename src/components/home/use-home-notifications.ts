@@ -5,7 +5,11 @@ import * as Device from "expo-device"
 import * as Notifications from "expo-notifications"
 
 import { ANIMA_COPY } from "@/brand/anima/copy/app-copy"
-import { getOwnPushTokenStatus, syncRegisteredPushToken } from "@/core/notifications/push-token"
+import {
+  getOwnPushTokenStatus,
+  syncNotificationPermissionState,
+  syncRegisteredPushToken,
+} from "@/core/notifications/push-token"
 
 export type NotificationPermissionStatus =
   | "granted"
@@ -76,13 +80,16 @@ export function useHomeNotifications({
       if (status === "granted") {
         await refreshPushTokenStatus()
       } else {
+        if (userId) {
+          await syncNotificationPermissionState({ userId, expoProjectId })
+        }
         setHasActivePushToken(null)
       }
     } catch {
       setNotificationPermissionStatus("unknown")
       setHasActivePushToken(null)
     }
-  }, [refreshPushTokenStatus])
+  }, [expoProjectId, refreshPushTokenStatus, userId])
 
   useFocusEffect(
     useCallback(() => {

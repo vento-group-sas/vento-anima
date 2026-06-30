@@ -1,4 +1,5 @@
 import "@/lib/monitoring"
+import "@/hooks/attendance/background-location-task"
 
 import { useEffect, useRef } from "react"
 import { Stack } from "expo-router"
@@ -23,7 +24,7 @@ Notifications.setNotificationHandler({
     shouldShowBanner: true,
     shouldShowList: true,
     shouldPlaySound: true,
-    shouldSetBadge: false,
+    shouldSetBadge: true,
   }),
 })
 

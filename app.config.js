@@ -14,7 +14,7 @@ module.exports = () => {
       slug: EXPO_ANIMA_BRAND.slug,
       platforms: ["ios", "android"],
       scheme: selectedVariant.scheme,
-      version: "1.2.1",
+      version: "1.3.0",
       jsEngine: "hermes",
       orientation: "portrait",
       icon: "./assets/icon-padded.png",
@@ -29,25 +29,44 @@ module.exports = () => {
         icon: "./assets/icon-padded.png",
         supportsTablet: false,
         bundleIdentifier: selectedVariant.iosBundleId,
-        buildNumber: "11",
+        buildNumber: "12",
         infoPlist: {
           NSLocationWhenInUseUsageDescription: "Necesitamos tu ubicacion para validar el check-in.",
+          NSLocationAlwaysAndWhenInUseUsageDescription: "Necesitamos validar tu ubicacion durante un turno activo, incluso si la aplicacion esta en segundo plano.",
+          UIBackgroundModes: ["location"],
           ITSAppUsesNonExemptEncryption: false
         }
       },
       android: {
         package: selectedVariant.androidPackage,
-        versionCode: 15,
+        versionCode: 16,
         adaptiveIcon: {
           foregroundImage: "./assets/adaptive-icon-padded.png",
           backgroundColor: "#F7F5F8"
         },
-        permissions: ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION", "POST_NOTIFICATIONS"]
+        permissions: [
+          "ACCESS_FINE_LOCATION",
+          "ACCESS_COARSE_LOCATION",
+          "ACCESS_BACKGROUND_LOCATION",
+          "FOREGROUND_SERVICE",
+          "FOREGROUND_SERVICE_LOCATION",
+          "POST_NOTIFICATIONS"
+        ]
       },
       plugins: [
         "expo-router",
         "expo-secure-store",
         "expo-notifications",
+        [
+          "expo-location",
+          {
+            locationAlwaysAndWhenInUsePermission: "ANIMA usa tu ubicacion durante un turno activo para validar asistencia y registrar salida de sede.",
+            locationWhenInUsePermission: "ANIMA usa tu ubicacion para validar asistencia en la sede.",
+            isIosBackgroundLocationEnabled: true,
+            isAndroidBackgroundLocationEnabled: true,
+            isAndroidForegroundServiceEnabled: true
+          }
+        ],
         [
           "@sentry/react-native/expo",
           {

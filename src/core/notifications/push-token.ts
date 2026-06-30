@@ -45,6 +45,42 @@ function getPlatformLabel() {
   return Platform.OS || Device.osName?.toLowerCase() || "unknown"
 }
 
+function getDeviceName() {
+  return Device.modelName ?? Device.deviceName ?? Device.osName ?? "unknown"
+}
+
+export async function syncNotificationPermissionState({
+  userId,
+  expoProjectId,
+}: RegisterPushTokenOptions): Promise<PushTokenSyncResult> {
+  if (!userId) return { ok: false, message: "No hay sesion activa." }
+
+  const permissions = await Notifications.getPermissionsAsync()
+  if (permissions.status === "granted") {
+    return syncRegisteredPushToken({
+      userId,
+      expoProjectId,
+    })
+  }
+
+  const { error } = await supabase
+    .from("employee_push_tokens")
+    .update({
+      is_active: false,
+      notifications_enabled: false,
+      permission_status: permissions.status,
+      permission_updated_at: new Date().toISOString(),
+      last_seen: new Date().toISOString(),
+    })
+    .eq("employee_id", userId)
+
+  if (error) {
+    return { ok: false, message: error.message }
+  }
+
+  return { ok: true, message: "Permiso de notificaciones sincronizado." }
+}
+
 export async function getOwnPushTokenStatus(userId: string): Promise<OwnPushTokenStatus> {
   const { data, error } = await supabase
     .from("employee_push_tokens")
@@ -99,6 +135,9 @@ export async function syncRegisteredPushToken({
           body: {
             token,
             platform: getPlatformLabel(),
+            permissionStatus: permissions.status,
+            notificationsEnabled: permissions.status === "granted",
+            deviceName: getDeviceName(),
           },
         }),
         PUSH_TOKEN_TIMEOUT_MS,

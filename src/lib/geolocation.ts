@@ -279,7 +279,7 @@ export async function getValidatedLocation(opts?: {
     const maxAccuracyMeters = opts?.maxAccuracyMeters ?? VALIDATION_CONFIG.maxAccuracyMeters
     const samples = Math.max(1, Math.min(opts?.samples ?? 1, 6))
     const timeoutMs = opts?.timeoutMs ?? VALIDATION_CONFIG.locationTimeoutMs
-    const perSampleTimeoutMs = Math.max(4000, Math.floor(timeoutMs / samples))
+    const perSampleTimeoutMs = Math.max(2500, Math.floor(timeoutMs / samples))
     const allowRecentLocation = opts?.allowRecentLocation !== false
     const recentLocationMaxAgeMs =
       opts?.recentLocationMaxAgeMs ?? VALIDATION_CONFIG.maxFastLocationAgeMs
@@ -354,7 +354,7 @@ export async function getValidatedLocation(opts?: {
       }
 
       // Pequeña pausa para que el GPS "converja"
-      if (i < samples - 1) await sleep(700)
+      if (i < samples - 1) await sleep(350)
     }
 
     if (!best) {

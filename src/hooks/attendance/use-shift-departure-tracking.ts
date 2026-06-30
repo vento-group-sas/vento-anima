@@ -62,6 +62,14 @@ async function notifyAutomaticCheckout(siteName: string | null) {
   });
 }
 
+function isSameLocalDay(left: Date, right: Date) {
+  return (
+    left.getFullYear() === right.getFullYear() &&
+    left.getMonth() === right.getMonth() &&
+    left.getDate() === right.getDate()
+  );
+}
+
 export function useShiftDepartureTracking({
   userId,
   isEmployeeActive,
@@ -111,6 +119,11 @@ export function useShiftDepartureTracking({
 
       const lastLog = await getLastAttendanceLog();
       if (!lastLog || lastLog.action !== "check_in") return;
+
+      const checkInDate = new Date(lastLog.occurred_at);
+      if (!Number.isFinite(checkInDate.getTime()) || !isSameLocalDay(checkInDate, new Date(now))) {
+        return;
+      }
 
       const shiftKey = `${lastLog.site_id}|${lastLog.occurred_at}`;
       if (departureLoggedShiftKeyRef.current === shiftKey) return;

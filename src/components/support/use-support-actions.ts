@@ -36,6 +36,7 @@ export function useSupportActions({
 
   const [newMessage, setNewMessage] = useState("");
   const [isSendingMessage, setIsSendingMessage] = useState(false);
+  const [ticketActionInFlightId, setTicketActionInFlightId] = useState<string | null>(null);
 
   const submitTicket = useCallback(async () => {
     if (!userId) return;
@@ -121,7 +122,7 @@ export function useSupportActions({
 
       await supabase
         .from("support_tickets")
-        .update({ updated_at: new Date().toISOString() })
+        .update({ updated_at: new Date().toISOString(), status: "in_progress" })
         .eq("id", selectedTicketId);
 
       setNewMessage("");
@@ -133,6 +134,52 @@ export function useSupportActions({
       setIsSendingMessage(false);
     }
   }, [loadMessages, loadTickets, newMessage, selectedTicketId, userId]);
+
+  const closeTicket = useCallback(async () => {
+    if (!userId || !selectedTicketId) return;
+    setTicketActionInFlightId(selectedTicketId);
+    try {
+      const { error } = await supabase
+        .from("support_tickets")
+        .update({
+          status: "closed",
+          resolved_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", selectedTicketId);
+      if (error) throw error;
+      await loadTickets();
+    } catch (err) {
+      console.error("[SUPPORT] Close ticket error:", err);
+      Alert.alert("Soporte", "No se pudo cerrar la conversación.");
+    } finally {
+      setTicketActionInFlightId(null);
+    }
+  }, [loadTickets, selectedTicketId, userId]);
+
+  const hideTicket = useCallback(async () => {
+    if (!userId || !selectedTicketId) return;
+    setTicketActionInFlightId(selectedTicketId);
+    try {
+      const { error } = await supabase.from("support_ticket_reads").upsert(
+        {
+          ticket_id: selectedTicketId,
+          employee_id: userId,
+          hidden_at: new Date().toISOString(),
+          last_read_at: new Date().toISOString(),
+        },
+        { onConflict: "ticket_id,employee_id" },
+      );
+      if (error) throw error;
+      setSelectedTicketId(null);
+      await loadTickets();
+    } catch (err) {
+      console.error("[SUPPORT] Hide ticket error:", err);
+      Alert.alert("Soporte", "No se pudo ocultar la conversación.");
+    } finally {
+      setTicketActionInFlightId(null);
+    }
+  }, [loadTickets, selectedTicketId, setSelectedTicketId, userId]);
 
   const submitContactWorker = useCallback(async () => {
     if (!userId || !selectedWorker) return;
@@ -233,8 +280,11 @@ export function useSupportActions({
     newMessage,
     setNewMessage,
     isSendingMessage,
+    ticketActionInFlightId,
     submitTicket,
     sendMessage,
+    closeTicket,
+    hideTicket,
     submitContactWorker,
   };
 }

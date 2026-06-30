@@ -3,7 +3,7 @@ import { AppState } from "react-native"
 import * as Device from "expo-device"
 import * as Notifications from "expo-notifications"
 
-import { getOwnPushTokenStatus, syncRegisteredPushToken } from "@/core/notifications/push-token"
+import { getOwnPushTokenStatus, syncNotificationPermissionState } from "@/core/notifications/push-token"
 
 type PushTokenRegistrationArgs = {
   userId: string | null | undefined
@@ -25,14 +25,22 @@ export function usePushTokenRegistration({
     pushSyncInFlightRef.current = true
     try {
       const permissions = await Notifications.getPermissionsAsync()
-      if (permissions.status !== "granted") return
+      if (permissions.status !== "granted") {
+        const result = await syncNotificationPermissionState({ userId, expoProjectId })
+        if (result.ok) {
+          lastSuccessfulSyncAtRef.current = Date.now()
+        } else {
+          console.warn("[AUTH] Push permission sync incomplete:", result.message)
+        }
+        return
+      }
 
       const status = await getOwnPushTokenStatus(userId)
       if (status.hasActiveToken && Date.now() - lastSuccessfulSyncAtRef.current < 6 * 60 * 60 * 1000) {
         return
       }
 
-      const result = await syncRegisteredPushToken({ userId, expoProjectId })
+      const result = await syncNotificationPermissionState({ userId, expoProjectId })
       if (result.ok) {
         lastSuccessfulSyncAtRef.current = Date.now()
       } else {

@@ -6,12 +6,14 @@ import { Platform } from "react-native"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { COLORS } from "@/constants/colors"
 import { useAuth } from "@/contexts/auth-context"
+import { useSupportUnreadCount } from "@/components/support/use-support-unread-count"
 
 export default function AppLayout() {
-  const { employee } = useAuth()
+  const { user, employee } = useAuth()
   const insets = useSafeAreaInsets()
   const router = useRouter()
   const role = employee?.role ?? null
+  const supportUnreadCount = useSupportUnreadCount(user?.id)
 
   useEffect(() => {
     const openShiftScreenIfNeeded = (data: Record<string, unknown> | undefined) => {
@@ -22,6 +24,10 @@ export default function AppLayout() {
         data?.type === "shift_auto_checkout"
       ) {
         router.replace("/shifts")
+        return
+      }
+      if (data?.type === "support_message") {
+        router.replace("/support")
       }
     }
 
@@ -209,6 +215,7 @@ export default function AppLayout() {
         options={{
           title: "Soporte",
           tabBarLabel: "Soporte",
+          tabBarBadge: supportUnreadCount > 0 ? supportUnreadCount : undefined,
           tabBarIcon: ({ color, size, focused }) => (
             <Ionicons
               name={focused ? "help-circle" : "help-circle-outline"}

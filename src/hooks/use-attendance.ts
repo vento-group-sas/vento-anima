@@ -40,6 +40,11 @@ import {
 import { useRealtimeGeofence } from "@/hooks/attendance/use-realtime-geofence"
 import { useShiftDepartureTracking } from "@/hooks/attendance/use-shift-departure-tracking"
 import {
+  ensureAttendanceBackgroundLocationPermission,
+  startAttendanceBackgroundLocation,
+  stopAttendanceBackgroundLocation,
+} from "@/hooks/attendance/background-location-task"
+import {
   runAttendanceQueueSync,
   runBreakQueueSync,
   syncAttendanceEventOnServer as syncAttendanceEventOnServerHelper,
@@ -125,6 +130,14 @@ type LastAttendanceLogSnapshot = {
   shift_id: string | null
   client_event_id: string | null
   pending?: boolean
+}
+
+function isSameLocalDay(left: Date, right: Date) {
+  return (
+    left.getFullYear() === right.getFullYear() &&
+    left.getMonth() === right.getMonth() &&
+    left.getDate() === right.getDate()
+  )
 }
 
 type PublishedShiftContext = {
@@ -572,7 +585,10 @@ export function useAttendance() {
       return canReuseRecentReadyGeofenceState(
         geofenceCacheRef,
         mode,
-        attendancePolicy.geofence_latch_ttl_checkin_ms,
+        Math.min(
+          attendancePolicy.geofence_latch_ttl_checkin_ms,
+          attendancePolicy.geofence_ready_cache_ms,
+        ),
         attendancePolicy.geofence_latch_ttl_checkout_ms,
         siteId,
         maxAgeMs
@@ -839,8 +855,13 @@ export function useAttendance() {
       let lastCheckIn: string | null = null
       let lastCheckOut: string | null = null
       let openStartAt: string | null = null
+      const lastLogDate = lastLog?.occurred_at ? new Date(lastLog.occurred_at) : null
+      const lastLogIsToday =
+        !!lastLogDate &&
+        Number.isFinite(lastLogDate.getTime()) &&
+        isSameLocalDay(lastLogDate, new Date(nowMs))
 
-      if (lastLog?.action === "check_in") {
+      if (lastLog?.action === "check_in" && lastLogIsToday) {
         status = "checked_in"
         currentSiteName = lastLog.site_name
         currentSiteId = (lastLog as { site_id?: string })?.site_id ?? null
@@ -855,7 +876,7 @@ export function useAttendance() {
           const from = openStart > start.getTime() ? openStart : start.getTime()
           openStartAt = new Date(from).toISOString()
         }
-      } else if (lastLog?.action === "check_out") {
+      } else if (lastLog?.action === "check_out" && lastLogIsToday) {
         if (lastTodayCheckIn) {
           const logWithSiteId = lastTodayCheckIn as {
             site_id?: string
@@ -1563,8 +1584,8 @@ export function useAttendance() {
           if (!location) {
             const locationResult = await getValidatedLocation({
               maxAccuracyMeters: policy.maxAccuracyMeters,
-              samples: mode === "check_out" ? 2 : 3,
-              timeoutMs: mode === "check_out" ? 8000 : 12000,
+              samples: mode === "check_out" ? 1 : 2,
+              timeoutMs: mode === "check_out" ? 5000 : 6500,
               allowRecentLocation: true,
               recentLocationMaxAgeMs: 120000,
             })
@@ -1771,6 +1792,17 @@ export function useAttendance() {
 
       if (!geo.siteId) {
         return { success: false, error: "No se pudo determinar la sede" }
+      }
+
+      const backgroundLocationGranted =
+        await ensureAttendanceBackgroundLocationPermission()
+      if (!backgroundLocationGranted) {
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
+        return {
+          success: false,
+          error:
+            "Debes permitir ubicacion siempre para iniciar turno. ANIMA la usa solo durante el turno activo.",
+        }
       }
 
       const location = geo.location
@@ -2240,6 +2272,26 @@ export function useAttendance() {
     refreshGeofence,
     registerOpenShiftDepartureEvent,
   })
+
+  useEffect(() => {
+    if (!user?.id || !employee?.isActive) {
+      void stopAttendanceBackgroundLocation()
+      return
+    }
+
+    if (attendanceState.status !== "checked_in") {
+      void stopAttendanceBackgroundLocation()
+      return
+    }
+
+    void startAttendanceBackgroundLocation()
+
+    return () => {
+      if (attendanceState.status !== "checked_in") {
+        void stopAttendanceBackgroundLocation()
+      }
+    }
+  }, [attendanceState.status, employee?.isActive, user?.id])
 
   const selectSiteForCheckIn = useCallback(
     async (siteId: string) => {

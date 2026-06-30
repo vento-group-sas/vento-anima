@@ -15,9 +15,12 @@ type Props = {
   isLoadingMessages: boolean;
   newMessage: string;
   isSendingMessage: boolean;
+  ticketActionInFlightId: string | null;
   onSelectTicket: (ticketId: string) => void;
   onChangeNewMessage: (value: string) => void;
   onSendMessage: () => void;
+  onCloseTicket: () => void;
+  onHideTicket: () => void;
   formatDateTime: (value: string) => string;
   statusMeta: (status: TicketStatus) => { label: string; color: string; bg: string };
   currentUserId: string | undefined;
@@ -32,9 +35,12 @@ export function SupportTicketsSection({
   isLoadingMessages,
   newMessage,
   isSendingMessage,
+  ticketActionInFlightId,
   onSelectTicket,
   onChangeNewMessage,
   onSendMessage,
+  onCloseTicket,
+  onHideTicket,
   formatDateTime,
   statusMeta,
   currentUserId,
@@ -43,7 +49,7 @@ export function SupportTicketsSection({
     <>
       <View style={[SUPPORT_UI.card, { padding: 14 }]}>
         <Text style={styles.cardTitle}>Tickets</Text>
-        <Text style={styles.cardSubtitle}>Selecciona uno para abrir el chat interno.</Text>
+        <Text style={styles.cardSubtitle}>Bandeja de conversaciones internas.</Text>
 
         {isLoadingTickets ? (
           <View style={{ marginTop: 14, alignItems: "center" }}>
@@ -76,9 +82,16 @@ export function SupportTicketsSection({
                 <View style={{ flex: 1, paddingRight: 10 }}>
                   <Text style={{ fontWeight: "800", color: COLORS.text }}>{ticket.title}</Text>
                   <Text style={styles.ticketMeta}>
-                    {ticket.siteName ?? "Sin sede"} · {formatDateTime(ticket.updated_at)}
+                    {ticket.siteName ?? "Sin sede"} · {formatDateTime(ticket.lastMessageAt ?? ticket.updated_at)}
                   </Text>
                 </View>
+                {ticket.unreadCount > 0 ? (
+                  <View style={styles.unreadBadge}>
+                    <Text style={styles.unreadBadgeText}>
+                      {ticket.unreadCount > 99 ? "99+" : ticket.unreadCount}
+                    </Text>
+                  </View>
+                ) : null}
                 <View style={{ borderRadius: 999, paddingVertical: 5, paddingHorizontal: 10, backgroundColor: status.bg }}>
                   <Text style={{ fontSize: 11, fontWeight: "800", color: status.color }}>{status.label}</Text>
                 </View>
@@ -92,6 +105,29 @@ export function SupportTicketsSection({
         <View style={[SUPPORT_UI.card, { padding: 14 }]}>
           <Text style={styles.cardTitle}>Chat interno</Text>
           <Text style={styles.cardSubtitle}>Ticket: {selectedTicket.title}</Text>
+          <View style={styles.chatActions}>
+            <TouchableOpacity
+              onPress={onCloseTicket}
+              disabled={ticketActionInFlightId === selectedTicket.id || selectedTicket.status === "closed"}
+              style={[
+                styles.chatAction,
+                selectedTicket.status === "closed" ? styles.chatActionDisabled : null,
+              ]}
+            >
+              <Ionicons name="checkmark-done-outline" size={15} color={COLORS.accent} />
+              <Text style={styles.chatActionText}>
+                {selectedTicket.status === "closed" ? "Cerrada" : "Cerrar"}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={onHideTicket}
+              disabled={ticketActionInFlightId === selectedTicket.id}
+              style={styles.chatAction}
+            >
+              <Ionicons name="archive-outline" size={15} color={COLORS.accent} />
+              <Text style={styles.chatActionText}>Ocultar</Text>
+            </TouchableOpacity>
+          </View>
 
           {isLoadingMessages ? (
             <View style={{ marginTop: 12, alignItems: "center" }}>
@@ -133,20 +169,21 @@ export function SupportTicketsSection({
             <TextInput
               value={newMessage}
               onChangeText={onChangeNewMessage}
-              placeholder="Escribe un mensaje..."
+              placeholder={selectedTicket.status === "closed" ? "Conversación cerrada" : "Escribe un mensaje..."}
               placeholderTextColor={COLORS.neutral}
+              editable={selectedTicket.status !== "closed"}
               style={styles.messageInput}
             />
             <TouchableOpacity
               onPress={onSendMessage}
-              disabled={isSendingMessage || !newMessage.trim()}
+              disabled={isSendingMessage || !newMessage.trim() || selectedTicket.status === "closed"}
               style={[
                 SUPPORT_UI.chip,
                 {
                   borderColor: COLORS.accent,
                   backgroundColor: "rgba(226, 0, 106, 0.12)",
                   justifyContent: "center",
-                  opacity: isSendingMessage || !newMessage.trim() ? 0.6 : 1,
+                  opacity: isSendingMessage || !newMessage.trim() || selectedTicket.status === "closed" ? 0.6 : 1,
                 },
               ]}
             >
@@ -190,6 +227,45 @@ const styles = {
     fontSize: 12,
     color: COLORS.neutral,
     marginTop: 4,
+  },
+  unreadBadge: {
+    minWidth: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+    backgroundColor: COLORS.accent,
+    paddingHorizontal: 6,
+    marginRight: 8,
+  },
+  unreadBadgeText: {
+    color: COLORS.white,
+    fontSize: 11,
+    fontWeight: "900" as const,
+  },
+  chatActions: {
+    flexDirection: "row" as const,
+    gap: 8,
+    marginTop: 10,
+  },
+  chatAction: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 5,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.porcelainAlt,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  chatActionDisabled: {
+    opacity: 0.55,
+  },
+  chatActionText: {
+    color: COLORS.accent,
+    fontSize: 12,
+    fontWeight: "800" as const,
   },
   messageInput: {
     flex: 1,

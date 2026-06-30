@@ -161,8 +161,11 @@ export default function SupportScreen() {
     newMessage,
     setNewMessage,
     isSendingMessage,
+    ticketActionInFlightId,
     submitTicket,
     sendMessage,
+    closeTicket,
+    hideTicket,
     submitContactWorker,
   } = useSupportActions({
     userId: user?.id,
@@ -217,9 +220,12 @@ export default function SupportScreen() {
             isLoadingMessages={isLoadingMessages}
             newMessage={newMessage}
             isSendingMessage={isSendingMessage}
+            ticketActionInFlightId={ticketActionInFlightId}
             onSelectTicket={setSelectedTicketId}
             onChangeNewMessage={setNewMessage}
             onSendMessage={sendMessage}
+            onCloseTicket={closeTicket}
+            onHideTicket={hideTicket}
             formatDateTime={formatDateTime}
             statusMeta={statusMeta}
             currentUserId={user?.id}

@@ -19,7 +19,7 @@ const DEFAULT_POLICY: AttendancePolicy = {
   geofence_check_out_max_accuracy_meters: 25,
   late_tolerance_minutes: 15,
   geofence_ready_cache_ms: 120000,
-  geofence_latch_ttl_checkin_ms: 15 * 60 * 1000,
+  geofence_latch_ttl_checkin_ms: 120000,
   geofence_latch_ttl_checkout_ms: 10 * 60 * 1000,
   shift_departure_max_accuracy_meters: 35,
   shift_departure_threshold_meters: 200,

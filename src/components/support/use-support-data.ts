@@ -17,9 +17,14 @@ function normalizeTicket(raw: any): TicketRow {
     site_id: raw.site_id ?? null,
     created_by: raw.created_by,
     assigned_to: raw.assigned_to ?? null,
+    target_employee_id: raw.target_employee_id ?? null,
     created_at: raw.created_at,
     updated_at: raw.updated_at,
     siteName: siteRelation?.name ?? null,
+    lastReadAt: null,
+    hiddenAt: null,
+    lastMessageAt: raw.updated_at,
+    unreadCount: 0,
   };
 }
 
@@ -119,16 +124,81 @@ export function useSupportData({
         const { data, error } = await supabase
           .from("support_tickets")
           .select(
-            "id, title, description, status, category, site_id, created_by, assigned_to, created_at, updated_at, sites(name)",
+            "id, title, description, status, category, site_id, created_by, assigned_to, target_employee_id, created_at, updated_at, sites(name)",
           )
           .order("updated_at", { ascending: false });
 
         if (error) throw error;
         const normalized = ((data as any[]) ?? []).map(normalizeTicket);
-        setTickets(normalized);
+        const ticketIds = normalized.map((ticket) => ticket.id);
+        const [readsResult, messagesResult] =
+          ticketIds.length > 0
+            ? await Promise.all([
+                supabase
+                  .from("support_ticket_reads")
+                  .select("ticket_id, employee_id, last_read_at, hidden_at")
+                  .eq("employee_id", userId)
+                  .in("ticket_id", ticketIds),
+                supabase
+                  .from("support_messages")
+                  .select("ticket_id, author_id, created_at")
+                  .in("ticket_id", ticketIds),
+              ])
+            : [
+                { data: [], error: null },
+                { data: [], error: null },
+              ];
+
+        if (readsResult.error) throw readsResult.error;
+        if (messagesResult.error) throw messagesResult.error;
+
+        const readsByTicket = new Map(
+          ((readsResult.data as any[]) ?? []).map((row) => [row.ticket_id, row]),
+        );
+        const messagesByTicket = new Map<string, any[]>();
+        ((messagesResult.data as any[]) ?? []).forEach((message) => {
+          const current = messagesByTicket.get(message.ticket_id) ?? [];
+          current.push(message);
+          messagesByTicket.set(message.ticket_id, current);
+        });
+
+        const withInboxState = normalized
+          .map((ticket) => {
+            const read = readsByTicket.get(ticket.id);
+            const ticketMessages = messagesByTicket.get(ticket.id) ?? [];
+            const lastReadAt = read?.last_read_at ?? null;
+            const lastReadMs = lastReadAt ? new Date(lastReadAt).getTime() : 0;
+            const unreadCount = ticketMessages.filter((message) => {
+              if (message.author_id === userId) return false;
+              const messageMs = new Date(message.created_at).getTime();
+              return Number.isFinite(messageMs) && messageMs > lastReadMs;
+            }).length;
+            const lastMessageAt =
+              ticketMessages
+                .map((message) => message.created_at)
+                .sort((a, b) => (a < b ? 1 : a > b ? -1 : 0))[0] ??
+              ticket.updated_at;
+
+            return {
+              ...ticket,
+              lastReadAt,
+              hiddenAt: read?.hidden_at ?? null,
+              lastMessageAt,
+              unreadCount,
+            };
+          })
+          .filter((ticket) => !ticket.hiddenAt);
+
+        const sorted = withInboxState.sort((a, b) =>
+          (a.lastMessageAt ?? a.updated_at) < (b.lastMessageAt ?? b.updated_at)
+            ? 1
+            : -1,
+        );
+
+        setTickets(sorted);
         setSelectedTicketId((prev) => {
-          if (prev && normalized.some((item) => item.id === prev)) return prev;
-          return normalized[0]?.id ?? null;
+          if (prev && sorted.some((item) => item.id === prev)) return prev;
+          return sorted[0]?.id ?? null;
         });
       } catch (err) {
         console.error("[SUPPORT] Tickets load error:", err);
@@ -146,6 +216,34 @@ export function useSupportData({
       loadTicketsInFlightRef.current = null;
     }
   }, [userId]);
+
+  const markTicketRead = useCallback(
+    async (ticketId: string | null) => {
+      if (!userId || !ticketId) return;
+      const nowIso = new Date().toISOString();
+      const { error } = await supabase.from("support_ticket_reads").upsert(
+        {
+          ticket_id: ticketId,
+          employee_id: userId,
+          last_read_at: nowIso,
+          hidden_at: null,
+        },
+        { onConflict: "ticket_id,employee_id" },
+      );
+      if (error) {
+        console.warn("[SUPPORT] Mark read failed:", error);
+        return;
+      }
+      setTickets((current) =>
+        current.map((ticket) =>
+          ticket.id === ticketId
+            ? { ...ticket, lastReadAt: nowIso, unreadCount: 0 }
+            : ticket,
+        ),
+      );
+    },
+    [userId],
+  );
 
   const loadMessages = useCallback(async (ticketId: string | null, opts?: { force?: boolean }) => {
     if (!ticketId) {
@@ -171,6 +269,7 @@ export function useSupportData({
 
         if (error) throw error;
         setMessages((data as MessageRow[]) ?? []);
+        await markTicketRead(ticketId);
       } catch (err) {
         console.error("[SUPPORT] Messages load error:", err);
         Alert.alert("Soporte", "No se pudieron cargar los mensajes del ticket.");
@@ -186,7 +285,7 @@ export function useSupportData({
     } finally {
       loadMessagesInFlightRef.current.delete(ticketId);
     }
-  }, []);
+  }, [markTicketRead]);
 
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
@@ -268,6 +367,7 @@ export function useSupportData({
     loadWorkersForContact,
     loadTickets,
     loadMessages,
+    markTicketRead,
     handleRefresh,
   };
 }

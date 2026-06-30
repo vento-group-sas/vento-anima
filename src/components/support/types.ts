@@ -9,9 +9,14 @@ export type TicketRow = {
   site_id: string | null;
   created_by: string;
   assigned_to: string | null;
+  target_employee_id: string | null;
   created_at: string;
   updated_at: string;
   siteName: string | null;
+  lastReadAt: string | null;
+  hiddenAt: string | null;
+  lastMessageAt: string | null;
+  unreadCount: number;
 };
 
 export type MessageRow = {
