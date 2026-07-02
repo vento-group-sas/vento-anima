@@ -7,6 +7,34 @@ const {
 module.exports = () => {
   const SENTRY_ORG = process.env.SENTRY_ORG ?? "vento-group";
   const SENTRY_PROJECT = process.env.SENTRY_PROJECT ?? "vento-anima-mobile";
+  const sentryUploadsEnabled =
+    process.env.SENTRY_DISABLE_AUTO_UPLOAD !== "true" &&
+    process.env.EXPO_NO_SENTRY !== "true";
+  const plugins = [
+    "expo-router",
+    "expo-secure-store",
+    "expo-notifications",
+    [
+      "expo-location",
+      {
+        locationAlwaysAndWhenInUsePermission: "ANIMA usa tu ubicacion durante un turno activo para validar asistencia y registrar salida de sede.",
+        locationWhenInUsePermission: "ANIMA usa tu ubicacion para validar asistencia en la sede.",
+        isIosBackgroundLocationEnabled: true,
+        isAndroidBackgroundLocationEnabled: true,
+        isAndroidForegroundServiceEnabled: true
+      }
+    ],
+  ];
+
+  if (sentryUploadsEnabled) {
+    plugins.push([
+      "@sentry/react-native/expo",
+      {
+        organization: SENTRY_ORG,
+        project: SENTRY_PROJECT,
+      },
+    ]);
+  }
 
   return {
     expo: {
@@ -53,28 +81,7 @@ module.exports = () => {
           "POST_NOTIFICATIONS"
         ]
       },
-      plugins: [
-        "expo-router",
-        "expo-secure-store",
-        "expo-notifications",
-        [
-          "expo-location",
-          {
-            locationAlwaysAndWhenInUsePermission: "ANIMA usa tu ubicacion durante un turno activo para validar asistencia y registrar salida de sede.",
-            locationWhenInUsePermission: "ANIMA usa tu ubicacion para validar asistencia en la sede.",
-            isIosBackgroundLocationEnabled: true,
-            isAndroidBackgroundLocationEnabled: true,
-            isAndroidForegroundServiceEnabled: true
-          }
-        ],
-        [
-          "@sentry/react-native/expo",
-          {
-            organization: SENTRY_ORG,
-            project: SENTRY_PROJECT,
-          },
-        ]
-      ],
+      plugins,
       updates: {
         url: `https://u.expo.dev/${EXPO_ANIMA_BRAND.expoProjectId}`
       },

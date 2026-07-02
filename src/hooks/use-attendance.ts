@@ -1814,6 +1814,18 @@ export function useAttendance() {
         mode: "check_in",
         operationalSiteId: geo.siteId,
       })
+      if (!shiftContext) {
+        return {
+          success: false,
+          error: "No tienes un turno publicado para esta sede en este momento.",
+        }
+      }
+      if (!shiftContext.operational_role) {
+        return {
+          success: false,
+          error: "Tu turno no tiene rol operativo asignado. Pide que lo ajusten en horarios.",
+        }
+      }
       const geofenceSiteId =
         cleanOptionalId((deviceInfo as any)?.attendanceContext?.geofenceSiteId) ?? geo.siteId
       const shiftId = shiftContext?.id ?? undefined
@@ -1882,6 +1894,14 @@ export function useAttendance() {
           mode: "check_in",
           operationalSiteId: lastGeo.siteId,
         })
+        if (!shiftContext || !shiftContext.operational_role) {
+          return {
+            success: false,
+            error: !shiftContext
+              ? "No tienes un turno publicado para esta sede en este momento."
+              : "Tu turno no tiene rol operativo asignado. Pide que lo ajusten en horarios.",
+          }
+        }
         const geofenceSiteId =
           cleanOptionalId((lastGeo.deviceInfo as any)?.attendanceContext?.geofenceSiteId) ??
           lastGeo.siteId
