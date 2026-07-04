@@ -47,6 +47,7 @@ export default function SplashScreen({ isAppReady, minDurationMs, onFinish }: Sp
   const isReadyRef = useRef(isAppReady)
   const minDoneRef = useRef(false)
   const exitStartedRef = useRef(false)
+  const finishCalledRef = useRef(false)
   const finishRef = useRef(onFinish)
 
   useEffect(() => {
@@ -88,6 +89,12 @@ export default function SplashScreen({ isAppReady, minDurationMs, onFinish }: Sp
 
     exitStartedRef.current = true
 
+    const finishOnce = () => {
+      if (finishCalledRef.current) return
+      finishCalledRef.current = true
+      finishRef.current()
+    }
+
     contentOpacity.value = withTiming(0, {
       duration: EXIT_DURATION_MS,
       easing: Easing.in(Easing.cubic),
@@ -96,9 +103,11 @@ export default function SplashScreen({ isAppReady, minDurationMs, onFinish }: Sp
       0.98,
       { duration: EXIT_DURATION_MS, easing: Easing.in(Easing.cubic) },
       (finished) => {
-        if (finished) runOnJS(finishRef.current)()
+        if (finished) runOnJS(finishOnce)()
       },
     )
+
+    setTimeout(finishOnce, EXIT_DURATION_MS + 250)
   }
 
   useEffect(() => {

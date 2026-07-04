@@ -1,6 +1,7 @@
 import { useState, type RefObject } from "react";
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -49,7 +50,7 @@ export default function LoginForm({
 
   return (
     <Animated.View style={[styles.cardShell, cardStyle]}>
-      <View style={styles.cardGlass} />
+      {Platform.OS === "ios" ? <View style={styles.cardGlass} /> : null}
       <View style={styles.cardInner}>
         <Text style={styles.cardTitle}>Ingresar</Text>
         <Text style={styles.cardHint}>
@@ -72,6 +73,7 @@ export default function LoginForm({
             returnKeyType="next"
             onSubmitEditing={() => passwordRef.current?.focus()}
             placeholderTextColor={COLORS.neutral}
+            underlineColorAndroid="transparent"
             onFocus={() => setEmailFocused(true)}
             onBlur={() => setEmailFocused(false)}
             onChangeText={onEmailChange}
@@ -100,6 +102,7 @@ export default function LoginForm({
               returnKeyType="done"
               onSubmitEditing={onSubmit}
               placeholderTextColor={COLORS.neutral}
+              underlineColorAndroid="transparent"
               style={[
                 styles.input,
                 styles.passwordInput,
@@ -162,13 +165,24 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.45)",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 14 },
-    shadowOpacity: 0.10,
-    shadowRadius: 28,
-    elevation: 8,
-    backgroundColor: "rgba(255,255,255,0.22)",
+    borderColor: Platform.OS === "android"
+      ? "rgba(226, 0, 106, 0.08)"
+      : "rgba(255,255,255,0.45)",
+    backgroundColor: Platform.OS === "android"
+      ? "rgba(255,255,255,0.92)"
+      : "rgba(255,255,255,0.22)",
+    ...Platform.select({
+      ios: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 14 },
+        shadowOpacity: 0.10,
+        shadowRadius: 28,
+      },
+      android: {
+        elevation: 0,
+      },
+      default: {},
+    }),
   },
   cardGlass: {
     ...StyleSheet.absoluteFillObject,

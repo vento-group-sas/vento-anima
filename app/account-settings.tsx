@@ -307,7 +307,7 @@ export default function AccountSettingsScreen() {
 
   const handleSignOut = useCallback(async () => {
     await signOut();
-    router.replace("/(auth)/splash");
+    router.replace("/splash");
   }, [router, signOut]);
 
   useEffect(() => {

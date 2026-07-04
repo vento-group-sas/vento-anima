@@ -13,6 +13,17 @@
         "APP_VARIANT": "development"
       }
     },
+    "previewDebug": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "channel": "preview",
+      "environment": "preview",
+      "env": {
+        "APP_VARIANT": "production",
+        "EXPO_NO_SENTRY": "true",
+        "SENTRY_DISABLE_AUTO_UPLOAD": "true"
+      }
+    },
     "preview": {
       "distribution": "internal",
       "android": {

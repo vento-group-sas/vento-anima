@@ -258,14 +258,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = async () => {
     const userId = user?.id ?? null
-    await supabase.auth.signOut()
-    setEmployee(null)
-    setEmployeeSites([])
-    setSelectedSiteId(null)
-    setHasPendingSiteChanges(false)
-    lastUserIdRef.current = null
+
+    resetAuthState()
+    lastSessionRef.current = null
+    setIsLoading(false)
+
+    try {
+      await supabase.auth.signOut({ scope: "local" })
+    } catch (err) {
+      console.warn("[AUTH] Local signOut failed:", err)
+    }
+
     if (userId) {
-      await clearAuthCache(userId)
+      try {
+        await clearAuthCache(userId)
+      } catch (err) {
+        console.warn("[AUTH] Auth cache clear failed:", err)
+      }
     }
   }
 
