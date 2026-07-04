@@ -10,6 +10,7 @@ import {
   formatShiftTime,
   getShiftStatusMeta,
   getShiftSiteName,
+  getPublicShiftRoleLabel,
   type ShiftRow,
 } from "./utils";
 import { getEmployeeName, type ManagerShiftRow } from "./use-shifts-data";
@@ -130,6 +131,7 @@ export function WeeklyShiftsSection({ title, subtitle, days, mode }: Props) {
               <>
                 {workItems.map((item) => {
                   const shiftNote = item.notes?.trim() ?? "";
+                  const shiftRoleLabel = getPublicShiftRoleLabel(item.operational_role);
 
                   return (
                     <View key={item.id} style={styles.shiftRow}>
@@ -159,6 +161,12 @@ export function WeeklyShiftsSection({ title, subtitle, days, mode }: Props) {
                                 }),
                               )} · ${getShiftSiteName(item.sites)}`}
                         </Text>
+
+                        {shiftRoleLabel ? (
+                          <View style={styles.rolePill}>
+                            <Text style={styles.rolePillText}>{shiftRoleLabel}</Text>
+                          </View>
+                        ) : null}
 
                         {shiftNote ? (
                           <View style={styles.shiftNoteBox}>
@@ -405,6 +413,21 @@ const styles = StyleSheet.create({
     color: COLORS.neutral,
     marginTop: 4,
     lineHeight: 18,
+  },
+  rolePill: {
+    alignSelf: "flex-start",
+    marginTop: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#BAE6FD",
+    backgroundColor: "#F0F9FF",
+  },
+  rolePillText: {
+    color: "#0369A1",
+    fontSize: 11,
+    fontWeight: "800",
   },
   statusPill: {
     borderRadius: 999,

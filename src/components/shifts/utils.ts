@@ -34,6 +34,34 @@ export function getShiftSiteName(
   return sites.name ?? fallback;
 }
 
+function normalizeRoleText(value: string | null | undefined) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+export function getPublicShiftRoleLabel(value: string | null | undefined) {
+  const normalized = normalizeRoleText(value);
+  if (!normalized) return "";
+  if (normalized.includes("caj")) return "Cajero";
+  if (normalized.includes("serv")) return "Servicio";
+  if (normalized.includes("barra") || normalized.includes("bar")) return "Barra";
+  if (
+    normalized.includes("cocin") ||
+    normalized.includes("repost") ||
+    normalized.includes("produccion")
+  ) {
+    return "Cocina";
+  }
+
+  const [firstSegment = ""] = String(value).split(/[-·|/]/);
+  const cleaned = firstSegment.trim();
+  if (!cleaned) return "";
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1).toLowerCase();
+}
+
 export function formatShiftTime(value: string) {
   if (!value) return "--:--";
   return value.slice(0, 5);
