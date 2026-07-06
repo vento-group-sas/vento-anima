@@ -42,7 +42,7 @@ module.exports = () => {
       slug: EXPO_ANIMA_BRAND.slug,
       platforms: ["ios", "android"],
       scheme: selectedVariant.scheme,
-      version: "1.3.1",
+      version: "1.3.2",
       jsEngine: "hermes",
       orientation: "portrait",
       icon: "./assets/icon-padded.png",
