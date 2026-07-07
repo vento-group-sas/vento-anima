@@ -23,9 +23,14 @@ type AttendanceLastLog = {
 type SiteRow = {
   id: string;
   name: string | null;
-  latitude: number | null;
-  longitude: number | null;
-  requires_geofence?: boolean | null;
+  latitude: number | string | null;
+  longitude: number | string | null;
+  checkin_radius_meters: number | string | null;
+};
+
+type SiteAttendancePolicyRow = {
+  checkin_radius_meters: number | string | null;
+  requires_geofence: boolean | null;
 };
 
 function unwrapRelation<T>(value: T | T[] | null | undefined): T | null {
@@ -41,8 +46,42 @@ function isSameLocalDay(left: Date, right: Date) {
   );
 }
 
+function toFiniteNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
 function isValidCoordinate(latitude: unknown, longitude: unknown) {
-  return Number.isFinite(latitude) && Number.isFinite(longitude);
+  return toFiniteNumber(latitude) !== null && toFiniteNumber(longitude) !== null;
+}
+
+async function resolveGeofenceRequirement(siteId: string, site: SiteRow) {
+  const hasCoordinates = isValidCoordinate(site.latitude, site.longitude);
+  let requiresGeofence = hasCoordinates;
+  let radiusMeters = toFiniteNumber(site.checkin_radius_meters) ?? 0;
+
+  const { data, error } = await supabase
+    .from("site_attendance_policy")
+    .select("checkin_radius_meters, requires_geofence")
+    .eq("site_id", siteId)
+    .maybeSingle<SiteAttendancePolicyRow>();
+
+  if (error) {
+    console.warn("[ATTENDANCE][BG_LOCATION] Policy lookup error:", error);
+    return { requiresGeofence, radiusMeters };
+  }
+
+  const policyRadius = toFiniteNumber(data?.checkin_radius_meters);
+  if (policyRadius !== null) {
+    radiusMeters = policyRadius;
+  }
+
+  if (data?.requires_geofence != null) {
+    requiresGeofence = Boolean(data.requires_geofence);
+  }
+
+  return { requiresGeofence, radiusMeters };
 }
 
 async function handleBackgroundLocation(rawLocation: Location.LocationObject) {
@@ -87,24 +126,27 @@ async function handleBackgroundLocation(rawLocation: Location.LocationObject) {
   const geofenceSiteId = lastLog.geofence_site_id ?? lastLog.site_id;
   const { data: site, error: siteError } = await supabase
     .from("sites")
-    .select("id, name, latitude, longitude, requires_geofence")
+    .select("id, name, latitude, longitude, checkin_radius_meters")
     .eq("id", geofenceSiteId)
     .maybeSingle<SiteRow>();
 
-  if (
-    siteError ||
-    !site ||
-    site.requires_geofence === false ||
-    !isValidCoordinate(site.latitude, site.longitude)
-  ) {
-    return;
-  }
+  if (siteError || !site) return;
+
+  const { requiresGeofence } = await resolveGeofenceRequirement(
+    geofenceSiteId,
+    site,
+  );
+  if (requiresGeofence === false) return;
+
+  const siteLatitude = toFiniteNumber(site.latitude);
+  const siteLongitude = toFiniteNumber(site.longitude);
+  if (siteLatitude === null || siteLongitude === null) return;
 
   const distanceMeters = calculateDistance(
     validated.latitude,
     validated.longitude,
-    Number(site.latitude),
-    Number(site.longitude),
+    siteLatitude,
+    siteLongitude,
   );
 
   if (distanceMeters + accuracy < SHIFT_DEPARTURE_TRACKING.thresholdMeters) {
