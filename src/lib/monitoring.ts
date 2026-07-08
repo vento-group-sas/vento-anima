@@ -4,12 +4,14 @@ import * as Updates from "expo-updates"
 const sentryDsn = process.env.EXPO_PUBLIC_SENTRY_DSN
 const monitoringEnabled = Boolean(sentryDsn)
 
-Sentry.init({
-  dsn: sentryDsn,
-  enabled: monitoringEnabled,
-  debug: __DEV__,
-  environment: __DEV__ ? "development" : "production",
-})
+if (monitoringEnabled) {
+  Sentry.init({
+    dsn: sentryDsn,
+    enabled: true,
+    debug: __DEV__,
+    environment: __DEV__ ? "development" : "production",
+  })
+}
 
 if (monitoringEnabled) {
   const manifest = Updates.manifest

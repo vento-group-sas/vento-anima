@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   RefreshControl,
   ScrollView,
-  StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -13,11 +12,16 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { useRouter } from "expo-router";
+import { StatusBar } from "expo-status-bar";
 import * as Location from "expo-location";
 
 import { COLORS } from "@/constants/colors";
 import { useAuth } from "@/contexts/auth-context";
-import { supabase } from "@/lib/supabase";
+import {
+  createSupabaseAuthSessionUnavailableError,
+  getSupabaseAuthSession,
+  supabase,
+} from "@/lib/supabase";
 
 const QA_ALLOWED_EMAILS = new Set([
   "carlosaaibarra@gmail.com",
@@ -339,6 +343,11 @@ export default function AnimaDiagnosticsScreen() {
     setState((prev) => ({ ...prev, loading: true, error: null }));
 
     try {
+      const session = await getSupabaseAuthSession("anima diagnostics");
+      if (!session?.user?.id) {
+        throw createSupabaseAuthSessionUnavailableError("anima diagnostics");
+      }
+
       const targetEmployeeId = selectedEmployeeId ?? cleanId(employee?.id) ?? cleanId(user.id);
       if (!targetEmployeeId) throw new Error("No se pudo determinar el empleado a revisar.");
 
@@ -547,7 +556,7 @@ export default function AnimaDiagnosticsScreen() {
   if (!isAllowed) {
     return (
       <SafeAreaView style={styles.container}>
-        <StatusBar barStyle="dark-content" backgroundColor={COLORS.porcelain} />
+        <StatusBar style="dark" />
         <View style={styles.denied}>
           <Ionicons name="lock-closed-outline" size={26} color={COLORS.accent} />
           <Text style={styles.pageTitle}>Acceso restringido</Text>
@@ -564,7 +573,7 @@ export default function AnimaDiagnosticsScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor={COLORS.porcelain} />
+      <StatusBar style="dark" />
 
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
         <TouchableOpacity style={styles.backInline} onPress={() => router.back()}>

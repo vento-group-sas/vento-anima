@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js"
+import type { Session } from "@supabase/supabase-js"
 import * as SecureStore from "expo-secure-store"
 import { AppState, type AppStateStatus } from "react-native"
 
@@ -58,6 +59,33 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     detectSessionInUrl: false,
   },
 })
+
+export function createSupabaseAuthSessionUnavailableError(context?: string) {
+  const message = context
+    ? `Sesion de Supabase no disponible para ${context}.`
+    : "Sesion de Supabase no disponible."
+
+  return Object.assign(new Error(message), {
+    code: "AUTH_SESSION_UNAVAILABLE",
+    status: 0,
+  })
+}
+
+export async function getSupabaseAuthSession(context?: string): Promise<Session | null> {
+  const { data, error } = await supabase.auth.getSession()
+
+  if (error) {
+    console.warn(
+      context
+        ? `[AUTH] getSession fallo en ${context}:`
+        : "[AUTH] getSession fallo:",
+      error,
+    )
+    return null
+  }
+
+  return data.session?.access_token ? data.session : null
+}
 
 let authRefreshAppStateSub: { remove: () => void } | null = null
 

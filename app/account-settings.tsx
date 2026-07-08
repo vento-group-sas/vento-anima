@@ -5,7 +5,6 @@ import {
   Linking,
   RefreshControl,
   ScrollView,
-  StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -15,6 +14,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import { StatusBar } from "expo-status-bar";
 import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
 
@@ -527,7 +527,7 @@ export default function AccountSettingsScreen() {
   if (!session) {
     return (
       <SafeAreaView style={styles.container}>
-        <StatusBar barStyle="dark-content" backgroundColor={COLORS.porcelain} />
+        <StatusBar style="dark" />
         <View style={styles.centered}>
           <Text style={styles.pageTitle}>Configuración</Text>
           <Text style={styles.mutedText}>No hay sesión activa.</Text>
@@ -541,7 +541,7 @@ export default function AccountSettingsScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor={COLORS.porcelain} />
+      <StatusBar style="dark" />
 
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
         <TouchableOpacity style={styles.backInline} onPress={() => router.back()}>

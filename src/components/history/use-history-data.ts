@@ -2,7 +2,11 @@ import { useCallback, useMemo, useState } from "react";
 import { Alert } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 
-import { supabase } from "@/lib/supabase";
+import {
+  createSupabaseAuthSessionUnavailableError,
+  getSupabaseAuthSession,
+  supabase,
+} from "@/lib/supabase";
 import type {
   AttendanceLog,
   DerivedLog,
@@ -116,6 +120,11 @@ export function useHistoryData({ userId }: UseHistoryDataArgs) {
     setIsLoading(true);
 
     try {
+      const session = await getSupabaseAuthSession("attendance history");
+      if (!session?.user?.id) {
+        throw createSupabaseAuthSessionUnavailableError("attendance history");
+      }
+
       const startIso = range.start.toISOString();
       const endIso = range.end.toISOString();
 

@@ -1,7 +1,11 @@
 import { useCallback, useState } from "react";
 import { Alert } from "react-native";
 
-import { supabase } from "@/lib/supabase";
+import {
+  createSupabaseAuthSessionUnavailableError,
+  getSupabaseAuthSession,
+  supabase,
+} from "@/lib/supabase";
 import type { DerivedLog } from "@/components/history/types";
 
 type UseHistoryInteractionsArgs = {
@@ -45,6 +49,11 @@ export function useHistoryInteractions({
     setIsSavingIncident(true);
 
     try {
+      const session = await getSupabaseAuthSession("attendance incident");
+      if (!session?.user?.id) {
+        throw createSupabaseAuthSessionUnavailableError("attendance incident");
+      }
+
       const { data, error } = await supabase
         .from("attendance_logs")
         .update({ notes: nextNotes })

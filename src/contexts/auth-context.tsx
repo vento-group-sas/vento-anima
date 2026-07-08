@@ -47,6 +47,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signInLastAttemptAtRef = useRef(0)
   const signInLastEmailRef = useRef<string | null>(null)
   const signInCooldownUntilRef = useRef(0)
+  const employeeBundleLoadRef = useRef<{
+    userId: string
+    promise: Promise<void>
+  } | null>(null)
 
   // Guardamos la ruta actual para poder consultarla dentro del listener de AppState
   const segmentsRef = useRef<string[]>(segments)
@@ -115,11 +119,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const loadEmployeeBundle = async (userId: string) => {
     resetForUser(userId)
-    await loadAuthEmployeeBundle(userId, {
+
+    const inFlight = employeeBundleLoadRef.current
+    if (inFlight?.userId === userId) {
+      await inFlight.promise
+      return
+    }
+
+    const promise = loadAuthEmployeeBundle(userId, {
       setEmployee,
       setEmployeeSites,
       setSelectedSiteId,
     }, AUTH_LOAD_TIMEOUT_MS)
+
+    employeeBundleLoadRef.current = { userId, promise }
+
+    try {
+      await promise
+    } finally {
+      if (employeeBundleLoadRef.current?.promise === promise) {
+        employeeBundleLoadRef.current = null
+      }
+    }
   }
 
   const setSelectedSite = useCallback(async (siteId: string | null) => {

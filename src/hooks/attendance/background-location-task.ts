@@ -6,7 +6,7 @@ import {
   buildValidatedLocationFromRaw,
   calculateDistance,
 } from "@/lib/geolocation";
-import { supabase } from "@/lib/supabase";
+import { getSupabaseAuthSession, supabase } from "@/lib/supabase";
 import { SHIFT_DEPARTURE_TRACKING } from "@/hooks/attendance/shared";
 
 export const ATTENDANCE_BACKGROUND_LOCATION_TASK =
@@ -97,12 +97,9 @@ async function handleBackgroundLocation(rawLocation: Location.LocationObject) {
   const accuracy = validated.accuracy ?? 999;
   if (accuracy > SHIFT_DEPARTURE_TRACKING.maxAccuracyMeters) return;
 
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser();
-
-  if (userError || !user?.id) return;
+  const session = await getSupabaseAuthSession("attendance background location");
+  const user = session?.user;
+  if (!user?.id) return;
 
   const { data: lastLog, error: lastLogError } = await supabase
     .from("attendance_logs")

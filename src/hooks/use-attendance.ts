@@ -55,7 +55,11 @@ import {
   persistPendingAttendanceQueueToStorage,
   persistPendingBreakQueueToStorage,
 } from "@/hooks/attendance/queue-storage"
-import { supabase } from "@/lib/supabase"
+import {
+  createSupabaseAuthSessionUnavailableError,
+  getSupabaseAuthSession,
+  supabase,
+} from "@/lib/supabase"
 import {
   buildValidatedLocationFromRaw,
   calculateDistance,
@@ -351,6 +355,8 @@ export function useAttendance() {
 
   const getLastAttendanceLog = useCallback(async (): Promise<LastAttendanceLogSnapshot | null> => {
     if (!user) return null
+    const session = await getSupabaseAuthSession("attendance last log")
+    if (!session?.user?.id) return null
 
     const { data, error } = await supabase
       .from("attendance_logs")
@@ -624,6 +630,11 @@ export function useAttendance() {
 
   const insertAttendanceLogWithRetry = useCallback(
     async (payload: AttendanceInsertPayload) => {
+      const session = await getSupabaseAuthSession("attendance insert")
+      if (!session?.user?.id) {
+        throw createSupabaseAuthSessionUnavailableError("attendance insert")
+      }
+
       let lastError: unknown = null
 
       for (let attempt = 1; attempt <= ATTENDANCE_WRITE_MAX_ATTEMPTS; attempt++) {
@@ -786,6 +797,12 @@ export function useAttendance() {
       const nowMs = Date.now()
       const startIso = start.toISOString()
       const endIso = end.toISOString()
+      const session = await getSupabaseAuthSession("today attendance")
+
+      if (!session?.user?.id) {
+        setIsOffline(true)
+        return
+      }
 
       const [{ data: todayLogs, error: todayError }, lastLog, storedPendingQueue] =
         await Promise.all([

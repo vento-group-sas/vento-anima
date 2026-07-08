@@ -1,4 +1,8 @@
-import { supabase } from "@/lib/supabase";
+import {
+  createSupabaseAuthSessionUnavailableError,
+  getSupabaseAuthSession,
+  supabase,
+} from "@/lib/supabase";
 import {
   getErrorMessage,
   getRetryDelayMs,
@@ -34,6 +38,11 @@ export async function syncAttendanceEventOnServer({
   };
 
   try {
+    const session = await getSupabaseAuthSession("attendance queue sync");
+    if (!session?.user?.id) {
+      throw createSupabaseAuthSessionUnavailableError("attendance queue sync");
+    }
+
     const { data, error } = await supabase.rpc("sync_attendance_events", {
       p_events: [payloadForRpc],
     });
@@ -221,6 +230,11 @@ export async function runBreakQueueSync({
           nextRetryAt: null,
         });
         continue;
+      }
+
+      const session = await getSupabaseAuthSession("break queue sync");
+      if (!session?.user?.id) {
+        throw createSupabaseAuthSessionUnavailableError("break queue sync");
       }
 
       if (item.payload.action === "start") {
