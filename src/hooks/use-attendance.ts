@@ -1839,13 +1839,7 @@ export function useAttendance() {
         mode: "check_in",
         operationalSiteId: geo.siteId,
       })
-      if (!shiftContext) {
-        return {
-          success: false,
-          error: "No tienes un turno publicado para esta sede en este momento.",
-        }
-      }
-      if (!shiftContext.operational_role) {
+      if (shiftContext && !shiftContext.operational_role) {
         return {
           success: false,
           error: "Tu turno no tiene rol operativo asignado. Pide que lo ajusten en horarios.",
@@ -1877,6 +1871,11 @@ export function useAttendance() {
             operationalSiteId: geo.siteId,
             geofenceSiteId,
           }),
+          attendanceException: shiftContext
+            ? null
+            : {
+                reason: "check_in_without_published_shift",
+              },
         },
       })
 
