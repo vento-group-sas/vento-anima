@@ -99,7 +99,7 @@ Objetivo: una sola fuente de verdad en la base de datos para poder escalar y qui
 | Dónde | Qué | Uso |
 |-------|-----|-----|
 | .env, eas.json, auth.ts | REVIEW_EMAILS, REVIEW_PASSWORD | Login automático para ese email |
-| SQL create_test_account | test@ventogroup.com, TestPass123, App Review (Apple/Google) | Crear empleado e invitación |
+| SQL create_test_account | test@ventogroup.com, [credencial privada], App Review (Apple/Google) | Crear empleado e invitación |
 | SQL site_review_demo | test@ventogroup.com, App Review (Demo), APP-REVIEW, vento_group, admin, demo | Sede solo para revisión |
 
 **Propuesta:**
