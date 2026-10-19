@@ -215,7 +215,13 @@ No terminar procesos ajenos ni relajar la validación del paquete Android.
 
 ### Estado abierto y criterio de cierre
 
-**Última evidencia:** VENTO MCP conectado, emulador disponible, la herramienta \`android_qa_connect_metro\` invocable y rechazo \`ANDROID_QA_METRO_OTHER_PROJECT\`. **No se ha demostrado** el proceso exacto responsable, la carga de ANIMA, el endpoint efectivo de su JavaScript, login, geocerca ni aviso de salida.
+**Última evidencia verificada:** VENTO MCP y emulador conectados. El arranque automático v0.13.19 devolvió `ANDROID_QA_METRO_AUTO_START_TIMEOUT`; **el usuario abrió manualmente ANIMA desde el cliente de desarrollo**. La captura posterior confirmó `Connected to: http://10.0.2.2:8081` y, tras cerrar el menú de desarrollador, mostró **la pantalla real de inicio de sesión de ANIMA**. Por tanto, el bundle sí cargó por el flujo manual. **No está demostrado** que el backend dentro de la aplicación sea el Supabase QA aislado, ni están verificadas autenticación, asistencia, geocerca, notificación o recuperación automática tras reinicio.
+
+### Verificación manual real de conexión (2026-10-18)
+
+**Ruta corta comprobada en el emulador:** con Metro en ejecución, abrir `ANIMA Dev`, seleccionar/conectar el servidor de desarrollo que muestra el propio launcher y cerrar el menú de desarrollador (botón `X` o acción `Back`). La pantalla correcta es el login de ANIMA. No hace falta reinstalar la extensión ni esperar un supuesto PASS de `android_qa_connect_metro` cuando el cliente ya está conectado. La URL `http://10.0.2.2:8081` es **solo evidencia observada de esa sesión**, nunca una constante operativa; obtener el endpoint actual después de cada reinicio.
+
+**Regla de diagnóstico:** después de un fallo del supervisor, **comprobar primero una captura del cliente Android y el estado de conexión visible en la interfaz**, antes de crear otra versión del VSIX. El fallo del supervisor no demuestra que la aplicación esté desconectada. El siguiente bloqueo funcional es verificar el backend QA efectivo desde la app antes de usar datos sintéticos.
 
 **Estado de automatización:** v0.13.17 solo conecta a Metro ya iniciado. El candidato instalable v0.13.18 añade arranque supervisado al invocar `android_qa_connect_metro`, con variante `development`, proyecto ANIMA verificado y backend QA aislado, sin terminar procesos ajenos. Sus pruebas locales no equivalen a validación en Windows: **queda pendiente instalarlo, comprobar la carga efectiva de ANIMA y repetir tras reiniciar el PC**. No inicia Metro por sí mismo durante el arranque de Windows.
 
