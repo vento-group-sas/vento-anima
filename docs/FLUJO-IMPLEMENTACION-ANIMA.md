@@ -217,6 +217,6 @@ No terminar procesos ajenos ni relajar la validación del paquete Android.
 
 **Última evidencia:** VENTO MCP conectado, emulador disponible, la herramienta \`android_qa_connect_metro\` invocable y rechazo \`ANDROID_QA_METRO_OTHER_PROJECT\`. **No se ha demostrado** el proceso exacto responsable, la carga de ANIMA, el endpoint efectivo de su JavaScript, login, geocerca ni aviso de salida.
 
-**Deuda técnica:** el MCP actual descubre/conecta un Metro **ya iniciado**, pero no arranca o supervisa Metro por sí mismo al encender Windows. Esa automatización requiere implementación y verificación separada; no debe declararse completada.
+**Estado de automatización:** v0.13.17 solo conecta a Metro ya iniciado. El candidato instalable v0.13.18 añade arranque supervisado al invocar `android_qa_connect_metro`, con variante `development`, proyecto ANIMA verificado y backend QA aislado, sin terminar procesos ajenos. Sus pruebas locales no equivalen a validación en Windows: **queda pendiente instalarlo, comprobar la carga efectiva de ANIMA y repetir tras reiniciar el PC**. No inicia Metro por sí mismo durante el arranque de Windows.
 
 **Cierre de recuperación:** una ejecución completa después de reinicio debe demostrar, sin IDs antiguos, Metro ANIMA Dev, pantalla de login, conexión aislada real, QA de geocerca, limpieza de fixtures y repetibilidad.
