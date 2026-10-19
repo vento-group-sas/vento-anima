@@ -145,3 +145,78 @@
 16. Fase 4: schema anima  
 
 Al terminar cada ítem, marcar en este documento y seguir con el siguiente.
+
+
+---
+
+## ANEXO QA ANDROID - RECUPERACION DE ANIMA DEV DESPUES DE REINICIAR WINDOWS
+
+**Fecha de registro:** 2026-10-18. **Alcance:** \`GAP-PKG-004\`; estado \`MATURATION_DRAFT\`. Este procedimiento operativo no modifica la secuencia de implementación anterior ni convierte pruebas pendientes en PASS.
+
+### Regla: verificar identidades, no memorizar IDs
+
+El servidor Metro, el puerto, la IP, el enlace Expo, los UUID/nombres Docker, el proceso, el serial ADB y la sesión MCP pueden cambiar tras cada reinicio. Hay tres identidades independientes que deben comprobarse: (a) ANIMA Dev, paquete Android \`com.vento.anima.dev\`, esquema \`anima-dev\`; (b) Metro perteneciente al workspace real \`vento-anima\` y ejecutado con \`APP_VARIANT=development\`; (c) Supabase QA aislado del alcance \`GAP-PKG-004\`. La configuración base de ANIMA selecciona **producción por defecto** cuando falta \`APP_VARIANT\`, por lo que el paquete \`com.vento.anima\` NO identifica la app de QA.
+
+### Orden de arranque validable
+
+1. Abrir Docker Desktop, VS Code y los workspaces \`vento-shell\` y \`vento-anima\`. Consultar \`workspace_overview\` de VENTO MCP: conexión real, sesión local activa, scope \`GAP-PKG-004\` y capacidad \`qa_synthetic\` para pruebas de datos. Repetir una vez si hay un error de conexión transitorio. No reutilizar índices de workspace o seriales de una sesión anterior.
+2. Confirmar el stack Supabase QA aislado ya configurado. Desde \`vento-shell\`, ejecutar el script existente \`npm run qa:isolated:viso\`. Continuar solo ante \`QA_TARGET: VERIFIED\`, \`QA_REST_BINDING: PASS\`, \`QA_HTTP_AUTH: PASS\`, migraciones consistentes y sin residuos sintéticos. Es un preflight, no inicia Supabase. Si falla, detenerse; nunca recurrir al Supabase principal, STAGING, producción, \`supabase db reset\` o credenciales de servicio dentro de Android.
+3. Abrir el Android Emulator y ejecutar \`android_devices\`. Confirmar mediante \`android_app_status\` que la aplicación DEV \`com.vento.anima.dev\` está instalada. El serial \`emulator-5554\` fue observado anteriormente, pero no es una constante.
+4. En **una terminal PowerShell situada en la raíz real de \`vento-anima\`**, configurar la variante en la misma sesión y verificar identidad **antes** de ejecutar Metro:
+
+   ~~~powershell
+   $env:APP_VARIANT = 'development'
+   node -p "require('./package.json').name"
+   node -p "require('./app.config.js')().expo.android.package"
+   ~~~
+
+   Las salidas obligatorias son \`anima\` y \`com.vento.anima.dev\`. Si no coinciden, no arrancar Expo. \`APP_VARIANT\` debe pertenecer al proceso Metro, no solo al emulador.
+5. Comprobar si existe ya un Metro correcto. Solo si no existe, iniciarlo **en esa terminal** con el script real de \`package.json\`:
+
+   ~~~powershell
+   npm run start -- --dev-client --localhost --port 8081
+   ~~~
+
+   Mantener la terminal abierta y comprobar \`Starting project at ...\` y \`Metro waiting on ...\`. El puerto es un valor inicial solicitado y puede variar; no guardar la URL de ese día ni iniciar otro Metro a ciegas.
+6. Ejecutar \`android_qa_connect_metro\` en el MCP con el workspace, paquete y emulador descubiertos **en la sesión actual**. Para Expo SDK 54 la extensión debe validar el manifiesto del servidor y obtener el enlace desde \`/_expo/link?choice=expo-dev-client&platform=android\`, utilizar ADB reverse únicamente para el emulador y abrir \`com.vento.anima.dev\`. El usuario no suministra URL, puerto ni comandos ADB.
+7. Tomar \`android_screenshot\`. La pantalla válida es el **login real de ANIMA**, no \`ANIMA Dev / Development Build / Development Servers\`. \`android_app_status.foreground=true\` solo acredita primer plano: no confirma que cargó el bundle.
+8. Verificar el backend Supabase realmente utilizado **desde la app Android**, no solo desde el host Windows. Los puertos QA del host observados son API \`127.0.0.1:23151\` y PostgreSQL \`127.0.0.1:20545\`; \`127.0.0.1\` en Android no debe confundirse con el host sin reenvío verificado. La app nunca recibe claves \`service_role\`.
+9. Tras verificar backend aislado y autorizar QA sintética, ejecutar login, check-in de sede sintética y GPS \`inside\`, \`outside_first\` y \`outside_second\` usando \`android_qa_set_location\`. Separar las muestras exteriores al menos **45 segundos**. El ACK de ADB no demuestra recepción en ANIMA ni aviso de geocerca; comprobar eventos/estado/capturas. Mantener la protección anti-mock.
+10. Limpiar exclusivamente identidades y fixtures de esa sesión mediante \`android_qa_cleanup\` cuando corresponda; verificar residuos. No resetear otras bases ni eliminar usuarios ajenos.
+
+### Diagnostico fijo de errores
+
+| Resultado | Significado | Acción segura |
+| --- | --- | --- |
+| \`ANDROID_QA_METRO_NOT_RUNNING\` | No se detectó Metro en el rango inspeccionado | Revisar el proceso y la terminal de \`vento-anima\` |
+| \`ANDROID_QA_METRO_OTHER_PROJECT\` | Existe Metro pero su manifiesto no anuncia \`com.vento.anima.dev\` | Verificar carpeta real, variante y otros servidores; no forzar |
+| \`ANDROID_QA_METRO_OPEN_ENDPOINT_UNAVAILABLE\` | La versión anterior del MCP utilizaba \`/_expo/open\` | Confirmar compatibilidad SDK 54 con \`/_expo/link\` |
+| \`Invalid URL host: ""\` | El launcher de Expo intentó abrir una URL inválida | No insistir con "Fetch development servers"; verificar Metro |
+| \`ANDROID_QA_NOT_ON_DECLARED_LOGIN_SCREEN\` | La aplicación aún no muestra login | Captura y diagnóstico de la carga JavaScript |
+| \`ANDROID_QA_GPS_SECOND_SAMPLE_TOO_EARLY\` | Menos de 45 s entre muestras exteriores | Esperar antes de repetir la segunda |
+| Error de identidad/atestación del backend QA | Backend no validado | Bloquear identidades y operaciones de asistencia |
+
+Para identificar procesos Metro **sin matarlos** en Windows:
+
+~~~powershell
+Get-NetTCPConnection -State Listen |
+  Where-Object { $_.LocalPort -ge 8081 -and $_.LocalPort -le 8090 } |
+  ForEach-Object {
+    $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$($_.OwningProcess)"
+    [pscustomobject]@{
+      Port = $_.LocalPort
+      PID = $_.OwningProcess
+      CommandLine = $proc.CommandLine
+    }
+  }
+~~~
+
+No terminar procesos ajenos ni relajar la validación del paquete Android.
+
+### Estado abierto y criterio de cierre
+
+**Última evidencia:** VENTO MCP conectado, emulador disponible, la herramienta \`android_qa_connect_metro\` invocable y rechazo \`ANDROID_QA_METRO_OTHER_PROJECT\`. **No se ha demostrado** el proceso exacto responsable, la carga de ANIMA, el endpoint efectivo de su JavaScript, login, geocerca ni aviso de salida.
+
+**Deuda técnica:** el MCP actual descubre/conecta un Metro **ya iniciado**, pero no arranca o supervisa Metro por sí mismo al encender Windows. Esa automatización requiere implementación y verificación separada; no debe declararse completada.
+
+**Cierre de recuperación:** una ejecución completa después de reinicio debe demostrar, sin IDs antiguos, Metro ANIMA Dev, pantalla de login, conexión aislada real, QA de geocerca, limpieza de fixtures y repetibilidad.
