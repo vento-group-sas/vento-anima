@@ -489,12 +489,18 @@ test('GAP-PKG-004: permiso background es opcional y se activa solo con turno ver
 
 test('GAP-PKG-004: capacidades nativas opcionales conservadas sin otorgar permiso runtime', () => {
   const expo = fs.readFileSync(new URL('../../app.config.js', import.meta.url), 'utf8');
-  const manifest = fs.readFileSync(
-    new URL('../../android/app/src/main/AndroidManifest.xml', import.meta.url), 'utf8');
+  const manifestUrl = new URL('../../android/app/src/main/AndroidManifest.xml', import.meta.url);
   assert.match(expo, /isAndroidBackgroundLocationEnabled:\s*true/u);
   assert.match(expo, /isIosBackgroundLocationEnabled:\s*true/u);
   assert.match(expo, /ACCESS_BACKGROUND_LOCATION/u);
-  assert.match(manifest, /android\.permission\.ACCESS_BACKGROUND_LOCATION/u);
+  assert.match(expo, /isAndroidForegroundServiceEnabled:\s*true/u);
+  assert.match(expo, /FOREGROUND_SERVICE_LOCATION/u);
+  // android/ es generado por Expo prebuild e ignorado por Git en runners CI.
+  // Validar config fuente siempre, y el manifiesto Android real cuando exista.
+  if (fs.existsSync(manifestUrl)) {
+    const manifest = fs.readFileSync(manifestUrl, 'utf8');
+    assert.match(manifest, /android\.permission\.ACCESS_BACKGROUND_LOCATION/u);
+  }
   const policy = fs.readFileSync(
     new URL('../../docs/ANIMA-SHIFT-POLICY-CONFIG-SIN-BUILD.md', import.meta.url), 'utf8');
   assert.match(policy, /El permiso de ubicación permanente\/en segundo plano no es requisito/u);
