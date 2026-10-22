@@ -6,6 +6,7 @@ type AttendanceActionCardProps = {
   cardStyle: object
   cardTintStyle: object
   canRegister: boolean
+  isGeofenceBlocked: boolean
   isLoading: boolean
   isGeoChecking: boolean
   isCheckActionLocked: boolean
@@ -13,12 +14,14 @@ type AttendanceActionCardProps = {
   ctaPrimaryLabel: string
   ctaSecondaryLabel: string | null
   onCheck: () => void
+  onRevalidateBlockedLocation: () => void
 }
 
 export function AttendanceActionCard({
   cardStyle,
   cardTintStyle,
   canRegister,
+  isGeofenceBlocked,
   isLoading,
   isGeoChecking,
   isCheckActionLocked,
@@ -26,13 +29,20 @@ export function AttendanceActionCard({
   ctaPrimaryLabel,
   ctaSecondaryLabel,
   onCheck,
+  onRevalidateBlockedLocation,
 }: AttendanceActionCardProps) {
+  // El CTA bloqueado solo actualiza GPS: nunca ejecuta check-in/check-out.
+  const canRevalidateBlockedLocation =
+    isGeofenceBlocked && !canRegister && !isLoading && !isGeoChecking && !isCheckActionLocked
+  const canPress = canRegister || canRevalidateBlockedLocation
+  const actionTextColor = canRevalidateBlockedLocation ? PALETTE.white : ctaTextColor
+
   return (
     <View style={{ ...cardStyle, padding: 16, marginBottom: 12 }}>
       <View pointerEvents="none" style={cardTintStyle} />
       <TouchableOpacity
-        onPress={onCheck}
-        disabled={!canRegister}
+        onPress={canRevalidateBlockedLocation ? onRevalidateBlockedLocation : onCheck}
+        disabled={!canPress}
         style={[
           {
             borderRadius: 20,
@@ -40,14 +50,14 @@ export function AttendanceActionCard({
             paddingHorizontal: 24,
             alignItems: "center",
             justifyContent: "center",
-            backgroundColor: canRegister ? PALETTE.accent : RGBA.ctaDisabled,
-            borderWidth: canRegister ? 0 : 1,
-            borderColor: canRegister ? "transparent" : PALETTE.border,
-            shadowColor: canRegister ? PALETTE.accent : "transparent",
-            shadowOpacity: canRegister ? 0.3 : 0,
-            shadowRadius: canRegister ? 12 : 0,
+            backgroundColor: canPress ? PALETTE.accent : RGBA.ctaDisabled,
+            borderWidth: canPress ? 0 : 1,
+            borderColor: canPress ? "transparent" : PALETTE.border,
+            shadowColor: canPress ? PALETTE.accent : "transparent",
+            shadowOpacity: canPress ? 0.3 : 0,
+            shadowRadius: canPress ? 12 : 0,
             shadowOffset: { width: 0, height: 6 },
-            elevation: canRegister ? 6 : 0,
+            elevation: canPress ? 6 : 0,
             minHeight: 64,
           },
         ]}
@@ -55,12 +65,12 @@ export function AttendanceActionCard({
       >
         {isLoading || isGeoChecking || isCheckActionLocked ? (
           <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-            <ActivityIndicator color={ctaTextColor} size="small" />
+            <ActivityIndicator color={actionTextColor} size="small" />
             <Text
               style={{
                 fontSize: 16,
                 fontWeight: "800",
-                color: ctaTextColor,
+                color: actionTextColor,
                 letterSpacing: 0.3,
               }}
             >
@@ -73,8 +83,8 @@ export function AttendanceActionCard({
               style={{
                 fontSize: 13,
                 fontWeight: "700",
-                color: ctaTextColor,
-                opacity: canRegister ? 0.95 : 0.6,
+                color: actionTextColor,
+                opacity: canPress ? 0.95 : 0.6,
                 letterSpacing: 0.5,
                 textTransform: "uppercase",
               }}
@@ -87,7 +97,7 @@ export function AttendanceActionCard({
                 style={{
                   fontSize: 18,
                   fontWeight: "800",
-                  color: ctaTextColor,
+                  color: actionTextColor,
                   letterSpacing: 0.2,
                 }}
               >

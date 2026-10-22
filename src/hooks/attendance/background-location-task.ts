@@ -1,5 +1,7 @@
 import * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
+import * as Notifications from "expo-notifications";
+import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 
 import {
@@ -7,10 +9,47 @@ import {
   calculateDistance,
 } from "@/lib/geolocation";
 import { getSupabaseAuthSession, supabase } from "@/lib/supabase";
-import { SHIFT_DEPARTURE_TRACKING } from "@/hooks/attendance/shared";
+import {
+  SHIFT_DEPARTURE_TRACKING,
+  findBlockingGeoWarning,
+} from "@/hooks/attendance/shared";
+
+const BG_DEPARTURE_NOTICE_KEY = "anima.attendance.departure-notice";
+// La salida local puede estar pendiente de sincronizar. No debe reactivar GPS.
+const BG_LOCAL_CHECKOUT_KEY = "anima.attendance.local-checkout";
+const BG_OUTSIDE_CONFIRMATION_MS = 45000;
+
+type BackgroundDepartureNotice = {
+  shiftKey: string;
+  firstOutsideAt: number;
+  warned: boolean;
+};
+
+async function readDepartureNotice(): Promise<BackgroundDepartureNotice | null> {
+  const raw = await SecureStore.getItemAsync(BG_DEPARTURE_NOTICE_KEY);
+  if (!raw) return null;
+  try {
+    const state = JSON.parse(raw) as BackgroundDepartureNotice;
+    if (
+      typeof state.shiftKey !== "string" ||
+      !Number.isFinite(state.firstOutsideAt) ||
+      typeof state.warned !== "boolean"
+    ) return null;
+    return state;
+  } catch {
+    return null;
+  }
+}
+
+async function saveDepartureNotice(state: BackgroundDepartureNotice) {
+  await SecureStore.setItemAsync(BG_DEPARTURE_NOTICE_KEY, JSON.stringify(state));
+}
 
 export const ATTENDANCE_BACKGROUND_LOCATION_TASK =
   "anima-attendance-background-location";
+
+// Cancela inicios nativos que aun esten pendientes cuando se cierra el turno.
+let trackingGeneration = 0;
 
 type AttendanceLastLog = {
   action: "check_in" | "check_out";
@@ -32,19 +71,6 @@ type SiteAttendancePolicyRow = {
   checkin_radius_meters: number | string | null;
   requires_geofence: boolean | null;
 };
-
-function unwrapRelation<T>(value: T | T[] | null | undefined): T | null {
-  if (!value) return null;
-  return Array.isArray(value) ? (value[0] ?? null) : value;
-}
-
-function isSameLocalDay(left: Date, right: Date) {
-  return (
-    left.getFullYear() === right.getFullYear() &&
-    left.getMonth() === right.getMonth() &&
-    left.getDate() === right.getDate()
-  );
-}
 
 function toFiniteNumber(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
@@ -85,21 +111,18 @@ async function resolveGeofenceRequirement(siteId: string, site: SiteRow) {
 }
 
 async function handleBackgroundLocation(rawLocation: Location.LocationObject) {
-  const validated = buildValidatedLocationFromRaw(rawLocation);
-  if (
-    !validated ||
-    !Number.isFinite(validated.latitude) ||
-    !Number.isFinite(validated.longitude)
-  ) {
+  // El check-out local prevalece aunque su evento de red siga en cola.
+  if (await SecureStore.getItemAsync(BG_LOCAL_CHECKOUT_KEY)) {
+    await stopAttendanceBackgroundLocation();
     return;
   }
-
-  const accuracy = validated.accuracy ?? 999;
-  if (accuracy > SHIFT_DEPARTURE_TRACKING.maxAccuracyMeters) return;
-
+  // No procesar coordenadas antes de confirmar un turno laboral abierto.
   const session = await getSupabaseAuthSession("attendance background location");
   const user = session?.user;
-  if (!user?.id) return;
+  if (!user?.id) {
+    await stopAttendanceBackgroundLocation();
+    return;
+  }
 
   const { data: lastLog, error: lastLogError } = await supabase
     .from("attendance_logs")
@@ -110,15 +133,44 @@ async function handleBackgroundLocation(rawLocation: Location.LocationObject) {
     .limit(1)
     .maybeSingle<AttendanceLastLog>();
 
-  if (lastLogError || !lastLog || lastLog.action !== "check_in") return;
-
-  const checkInDate = new Date(lastLog.occurred_at);
-  if (
-    !Number.isFinite(checkInDate.getTime()) ||
-    !isSameLocalDay(checkInDate, new Date())
-  ) {
+  if (lastLogError || !lastLog || lastLog.action !== "check_in" ||
+    !Number.isFinite(new Date(lastLog.occurred_at).getTime())) {
+    // Error de consulta: fallar cerrado, nunca seguir localizando un turno incierto.
+    await stopAttendanceBackgroundLocation();
+    await SecureStore.deleteItemAsync(BG_DEPARTURE_NOTICE_KEY);
     return;
   }
+
+  // Un descanso abierto impide avisos de salida y reinicia la confirmacion.
+  // Un error de lectura tambien falla cerrado: no reutilizar muestras antiguas.
+  const { data: openBreak, error: breakError } = await supabase
+    .from("attendance_breaks")
+    .select("id")
+    .eq("employee_id", user.id)
+    .is("ended_at", null)
+    .limit(1)
+    .maybeSingle<{ id: string }>();
+  if (breakError || openBreak) {
+    await SecureStore.deleteItemAsync(BG_DEPARTURE_NOTICE_KEY);
+    return;
+  }
+
+  const preciseAllowed = await ensureAttendanceBackgroundLocationPermission();
+  if (!preciseAllowed) {
+    await stopAttendanceBackgroundLocation();
+    return;
+  }
+  const validated = buildValidatedLocationFromRaw(rawLocation);
+  if (
+    !validated ||
+    !Number.isFinite(validated.latitude) ||
+    !Number.isFinite(validated.longitude) ||
+    !validated.isValid ||
+    Boolean(findBlockingGeoWarning(validated))
+  ) return;
+
+  const accuracy = validated.accuracy ?? 999;
+  if (accuracy > SHIFT_DEPARTURE_TRACKING.maxAccuracyMeters) return;
 
   const geofenceSiteId = lastLog.geofence_site_id ?? lastLog.site_id;
   const { data: site, error: siteError } = await supabase
@@ -146,21 +198,41 @@ async function handleBackgroundLocation(rawLocation: Location.LocationObject) {
     siteLongitude,
   );
 
-  if (distanceMeters + accuracy < SHIFT_DEPARTURE_TRACKING.thresholdMeters) {
+  const shiftKey = `${lastLog.site_id}|${lastLog.occurred_at}`;
+  const previous = await readDepartureNotice();
+  const now = Date.now();
+
+  // La salida física solo produce una alerta, nunca un check-out.
+  // Descontamos el margen de error para no alertar por una lectura ambigua.
+  if (distanceMeters - accuracy < SHIFT_DEPARTURE_TRACKING.thresholdMeters) {
+    if (previous?.shiftKey === shiftKey) {
+      await SecureStore.deleteItemAsync(BG_DEPARTURE_NOTICE_KEY);
+    }
     return;
   }
 
-  await supabase.rpc("register_shift_departure_event_autoclose", {
-    p_site_id: lastLog.site_id,
-    p_distance_meters: Math.round(distanceMeters),
-    p_accuracy_meters: Math.round(accuracy),
-    p_source: "mobile",
-    p_notes: `Background location: ${unwrapRelation(lastLog.sites)?.name ?? site.name ?? "sede"}`,
-    p_occurred_at: new Date(
-      Math.min(validated.timestamp ?? Date.now(), Date.now()),
-    ).toISOString(),
-    p_auto_checkout_threshold_meters: SHIFT_DEPARTURE_TRACKING.thresholdMeters,
+  if (!previous || previous.shiftKey !== shiftKey) {
+    await saveDepartureNotice({ shiftKey, firstOutsideAt: now, warned: false });
+    return;
+  }
+
+  if (previous.warned || now - previous.firstOutsideAt < BG_OUTSIDE_CONFIRMATION_MS) {
+    return;
+  }
+
+  const permission = await Notifications.getPermissionsAsync();
+  if (permission.status !== "granted") return;
+
+  await Notifications.scheduleNotificationAsync({
+    content: {
+      title: "Posible salida de sede",
+      body: `Parece que te alejaste de ${site.name ?? "tu sede"}. Tu turno continúa abierto. Si terminaste, registra tu salida manualmente.`,
+      data: { type: "shift" },
+      sound: true,
+    },
+    trigger: null,
   });
+  await saveDepartureNotice({ ...previous, warned: true });
 }
 
 TaskManager.defineTask(
@@ -184,37 +256,81 @@ TaskManager.defineTask(
   },
 );
 
-export async function ensureAttendanceBackgroundLocationPermission() {
-  const foreground = await Location.getForegroundPermissionsAsync();
+export async function ensureAttendanceBackgroundLocationPermission(
+  { request = false }: { request?: boolean } = {},
+) {
+  let foreground = await Location.getForegroundPermissionsAsync();
+  if (request && (foreground.status !== "granted" ||
+      (Platform.OS === "android" && foreground.android?.accuracy !== "fine"))) {
+    if (foreground.canAskAgain) {
+      foreground = await Location.requestForegroundPermissionsAsync();
+    }
+  }
   if (foreground.status !== "granted") return false;
+  // Android 12+ permits approximate location despite a granted permission.
+  if (Platform.OS === "android" && foreground.android?.accuracy !== "fine") return false;
 
   let background = await Location.getBackgroundPermissionsAsync();
-  if (background.status !== "granted" && background.canAskAgain) {
+  if (request && background.status !== "granted" && background.canAskAgain) {
+    // On Android 11+ this can open system settings; never fake a grant.
     background = await Location.requestBackgroundPermissionsAsync();
   }
-
-  return background.status === "granted";
+  return background.status === "granted" &&
+    await Location.hasServicesEnabledAsync() &&
+    await Location.isBackgroundLocationAvailableAsync();
 }
 
-export async function startAttendanceBackgroundLocation() {
-  const permissionGranted =
-    await ensureAttendanceBackgroundLocationPermission();
-  if (!permissionGranted) return false;
-
-  const servicesEnabled = await Location.hasServicesEnabledAsync();
-  if (!servicesEnabled) return false;
-
-  const alreadyStarted = await Location.hasStartedLocationUpdatesAsync(
+export async function startAttendanceBackgroundLocation(
+  { confirmedNewCheckIn = false }: { confirmedNewCheckIn?: boolean } = {},
+) {
+  const generation = trackingGeneration;
+  // El task nativo anterior no demuestra por sí mismo un turno abierto.
+  const started = await Location.hasStartedLocationUpdatesAsync(
     ATTENDANCE_BACKGROUND_LOCATION_TASK,
   );
-  if (alreadyStarted) return true;
+  if (!confirmedNewCheckIn && await SecureStore.getItemAsync(BG_LOCAL_CHECKOUT_KEY)) {
+    if (started) await stopAttendanceBackgroundLocation();
+    return false;
+  }
+
+  // Comprobar el turno real ANTES de reactivar un permiso opcional.
+  const session = await getSupabaseAuthSession("attendance background activation");
+  if (!session?.user?.id) {
+    if (started) await stopAttendanceBackgroundLocation();
+    return false;
+  }
+  const { data: latestLog, error: latestError } = await supabase
+    .from("attendance_logs")
+    .select("action")
+    .eq("employee_id", session.user.id)
+    .order("occurred_at", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ action: "check_in" | "check_out" }>();
+  if (latestError || latestLog?.action !== "check_in") {
+    if (started) await stopAttendanceBackgroundLocation();
+    return false;
+  }
+  if (generation !== trackingGeneration) return false;
+  if (confirmedNewCheckIn) {
+    // La entrada confirmada desbloquea el marcador anterior aun si se rehúsa
+    // ubicación background; su permiso se puede conceder más adelante.
+    await SecureStore.deleteItemAsync(BG_LOCAL_CHECKOUT_KEY);
+  }
+
+  const permissionGranted = await ensureAttendanceBackgroundLocationPermission();
+  if (!permissionGranted) {
+    if (started) await stopAttendanceBackgroundLocation();
+    return false;
+  }
+  if (started) return true;
 
   await Location.startLocationUpdatesAsync(
     ATTENDANCE_BACKGROUND_LOCATION_TASK,
     {
-      accuracy: Location.Accuracy.Balanced,
-      timeInterval: 60000,
-      distanceInterval: 50,
+      accuracy: Location.Accuracy.High,
+      timeInterval: 15000,
+      distanceInterval: 20,
       deferredUpdatesInterval: 60000,
       deferredUpdatesDistance: 50,
       pausesUpdatesAutomatically: false,
@@ -222,19 +338,28 @@ export async function startAttendanceBackgroundLocation() {
       foregroundService:
         Platform.OS === "android"
           ? {
-              notificationTitle: "ANIMA está validando tu turno",
+              notificationTitle: "ANIMA: turno activo",
               notificationBody:
-                "La ubicación se usa durante el turno activo para registrar salida de sede.",
+                "Ubicación precisa durante tu turno. Registra tu salida para detener el seguimiento.",
               notificationColor: "#E2006A",
             }
           : undefined,
     },
   );
-
-  return true;
+  if (generation !== trackingGeneration) {
+    await stopAttendanceBackgroundLocation();
+    return false;
+  }
+  return await Location.hasStartedLocationUpdatesAsync(ATTENDANCE_BACKGROUND_LOCATION_TASK);
 }
 
-export async function stopAttendanceBackgroundLocation() {
+export async function stopAttendanceBackgroundLocation(
+  { localCheckout = false }: { localCheckout?: boolean } = {},
+) {
+  trackingGeneration += 1;
+  if (localCheckout) {
+    await SecureStore.setItemAsync(BG_LOCAL_CHECKOUT_KEY, "1");
+  }
   const started = await Location.hasStartedLocationUpdatesAsync(
     ATTENDANCE_BACKGROUND_LOCATION_TASK,
   );

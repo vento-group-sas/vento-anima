@@ -69,23 +69,45 @@ export function useSupportActions({
         throw ticketError ?? new Error("Ticket creation failed");
       }
 
-      const { error: messageError } = await supabase
-        .from("support_messages")
-        .insert({
-          ticket_id: ticketRow.id,
-          author_id: userId,
-          body: ticketMessage.trim(),
-        });
+      // La fila del ticket ya se confirmó. Un fallo posterior de chat o recarga
+      // no puede convertir ese éxito en "ticket no creado" ni provocar duplicados.
+      let messageConfirmed = false;
+      try {
+        const { error: messageError } = await supabase
+          .from("support_messages")
+          .insert({
+            ticket_id: ticketRow.id,
+            author_id: userId,
+            body: ticketMessage.trim(),
+          });
+        if (messageError) throw messageError;
+        messageConfirmed = true;
+      } catch (messageError) {
+        console.warn("[SUPPORT] Ticket created; initial chat message unconfirmed:", messageError);
+      }
 
-      if (messageError) throw messageError;
-
+      const isCheckoutReview = ticketTitle.trim() === "Revisión de salida sin ubicación";
       setTicketTitle("");
       setTicketMessage("");
       setIsTicketOpen(false);
-      await loadTickets();
       setSelectedTicketId(ticketRow.id);
-      await loadMessages(ticketRow.id);
-      Alert.alert("Soporte", "Ticket creado y chat habilitado.");
+
+      const refreshResults = await Promise.allSettled([
+        loadTickets(),
+        loadMessages(ticketRow.id),
+      ]);
+      if (refreshResults.some((result) => result.status === "rejected")) {
+        console.warn("[SUPPORT] Ticket created; inbox refresh is incomplete");
+      }
+
+      Alert.alert(
+        "Soporte",
+        !messageConfirmed
+          ? "El ticket fue creado con su descripción, pero no pudimos confirmar el mensaje inicial del chat. Revisa el ticket antes de intentar otro; tu asistencia no se modificó."
+          : isCheckoutReview
+            ? "Solicitud registrada. Tu turno sigue abierto; solo se pidió una revisión administrativa. No se guardó ninguna salida."
+            : "Ticket creado y chat habilitado.",
+      );
     } catch (err) {
       console.error("[SUPPORT] Ticket create error:", err);
       Alert.alert("Soporte", "No se pudo crear el ticket.");

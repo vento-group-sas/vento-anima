@@ -49,6 +49,8 @@ export async function persistPendingAttendanceQueueToStorage(
   } catch (error) {
     console.warn("[ATTENDANCE] No se pudo guardar cola pendiente:", error);
     recordDiagnosticError("queue", getErrorMessage(error));
+    // La entrada o salida no esta encolada si SecureStore rechazo la escritura.
+    throw error;
   }
 }
 

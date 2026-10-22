@@ -16,8 +16,21 @@ type UseTeamInvitationsArgs = {
   selectedSiteId: string | null;
   employeeSiteId: string | null | undefined;
   sites: SiteRow[];
-  loadInvitations: () => Promise<void>;
+  loadInvitations: (opts?: { force?: boolean }) => Promise<void>;
 };
+
+function parseInvitationExpirationDay(value: string): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(year, month - 1, day, 23, 59, 59, 999);
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
+    return null;
+  }
+  return date;
+}
 
 export function useTeamInvitations({
   canManageTeam,
@@ -43,6 +56,7 @@ export function useTeamInvitations({
   const [resendingInvitationId, setResendingInvitationId] = useState<string | null>(null);
   const [cancellingInvitationId, setCancellingInvitationId] = useState<string | null>(null);
   const inviteInFlightRef = useRef(false);
+  const activeInvitationActionsRef = useRef(new Set<string>());
 
   const updateInviteForm = useCallback((patch: Partial<InviteFormState>) => {
     setInviteForm((prev) => ({ ...prev, ...patch }));
@@ -75,6 +89,15 @@ export function useTeamInvitations({
       normalized.includes("ya est")
     ) {
       return "Ese correo ya tiene una cuenta o una invitacion pendiente. Revisa la lista de invitaciones: si aparece pendiente, usa Reenviar; si ya tiene cuenta, el trabajador puede recuperar contrasena desde el login.";
+    }
+    if (normalized.includes("resend already in progress") || normalized.includes("resend in progress")) {
+      return "El reenvío ya está en curso. Actualiza la lista cuando termine.";
+    }
+    if (normalized.includes("changed during") || normalized.includes("cannot be resent")) {
+      return "La invitación cambió de estado. Actualiza la lista antes de intentarlo de nuevo.";
+    }
+    if (normalized.includes("invitation cancelled") || normalized.includes("already accepted")) {
+      return "Esta invitación fue cancelada o aceptada. Actualiza la lista.";
     }
     if (normalized.includes("no se pudo enviar el correo")) {
       return "No se pudo enviar el correo de invitación.";
@@ -173,10 +196,12 @@ export function useTeamInvitations({
       };
       const expiresAtTrim = inviteForm.expiresAt?.trim();
       if (expiresAtTrim) {
-        const date = new Date(expiresAtTrim);
-        if (!Number.isNaN(date.getTime())) {
-          body.expires_at = date.toISOString();
+        const date = parseInvitationExpirationDay(expiresAtTrim);
+        if (!date || date.getTime() <= Date.now()) {
+          Alert.alert("Equipo", "Fecha de vencimiento inválida. Usa AAAA-MM-DD y selecciona hoy o una fecha posterior.");
+          return;
         }
+        body.expires_at = date.toISOString();
       }
 
       const { data, error } = await supabase.functions.invoke(
@@ -218,7 +243,7 @@ export function useTeamInvitations({
       setInviteSuccessMessage(
         (data as { message?: string })?.message ?? null,
       );
-      await loadInvitations();
+      await loadInvitations({ force: true });
     } catch (err) {
       console.error("Invite error:", err);
       Alert.alert(
@@ -265,64 +290,55 @@ export function useTeamInvitations({
 
   const handleResendInvitation = useCallback(
     async (invitation: StaffInvitationRow) => {
-      if (!canManageTeam) return;
-      const effectiveStatus = getEffectiveInvitationStatus(invitation);
-      if (effectiveStatus === "linked_existing_user") {
-        Alert.alert(
-          "Equipo",
-          ANIMA_COPY.teamExistingUserNeedsPasswordBody,
-        );
+      if (!canManageTeam || activeInvitationActionsRef.current.has(invitation.id)) return;
+      if (getEffectiveInvitationStatus(invitation) === "linked_existing_user") {
+        Alert.alert("Equipo", ANIMA_COPY.teamExistingUserNeedsPasswordBody);
         return;
       }
-
+      activeInvitationActionsRef.current.add(invitation.id);
       setResendingInvitationId(invitation.id);
       try {
         const { data, error } = await supabase.functions.invoke(
-          "staff-invitations-resend",
-          {
-            body: { staff_invitation_id: invitation.id },
-          },
+          "staff-invitations-resend", { body: { staff_invitation_id: invitation.id } },
         );
-
         if (error) {
-          Alert.alert(
-            "Equipo",
-            getUserFacingAuthError(
-              error,
-              "No se pudo reenviar la invitación. Intenta nuevamente.",
-            ),
-          );
+          const detail = await readFunctionError(error);
+          Alert.alert("Equipo", getInviteErrorMessage(
+            detail ? { message: detail } : error,
+            "No se pudo reenviar la invitación. Intenta nuevamente.",
+          ));
           return;
         }
-
-        Alert.alert(
-          "Equipo",
-          String(
-            (data as { message?: string })?.message ??
-              "Invitación reenviada correctamente.",
-          ),
-        );
-        await loadInvitations();
+        const response = data as {
+          ok?: boolean; status?: string; invitation_id?: string;
+          error?: string; message?: string;
+        } | null;
+        if (response?.error || response?.ok !== true ||
+            response?.status !== "sent" || response?.invitation_id !== invitation.id) {
+          Alert.alert("Equipo", getInviteErrorMessage(
+            { message: response?.error || "El servidor no confirmó el reenvío." },
+            "No se pudo reenviar la invitación.",
+          ));
+          return;
+        }
+        Alert.alert("Equipo", response.message || "Invitación reenviada correctamente.");
+        await loadInvitations({ force: true });
       } catch (err) {
         console.error("Resend invitation error:", err);
-        Alert.alert(
-          "Equipo",
-          getUserFacingAuthError(
-            err,
-            "No se pudo reenviar la invitación. Intenta nuevamente.",
-          ),
-        );
+        Alert.alert("Equipo", getInviteErrorMessage(
+          err, "No se pudo reenviar la invitación. Intenta nuevamente.",
+        ));
       } finally {
+        activeInvitationActionsRef.current.delete(invitation.id);
         setResendingInvitationId(null);
       }
     },
-    [canManageTeam, getEffectiveInvitationStatus, loadInvitations],
+    [canManageTeam, getEffectiveInvitationStatus, getInviteErrorMessage, loadInvitations, readFunctionError],
   );
 
   const handleCancelInvitation = useCallback(
     async (invitation: StaffInvitationRow) => {
-      if (!canManageTeam) return;
-
+      if (!canManageTeam || activeInvitationActionsRef.current.has(invitation.id)) return;
       Alert.alert(
         "Cancelar invitación",
         `Se cancelará la invitación de ${invitation.email ?? "este correo"}.`,
@@ -332,44 +348,42 @@ export function useTeamInvitations({
             text: "Cancelar invitación",
             style: "destructive",
             onPress: async () => {
+              if (activeInvitationActionsRef.current.has(invitation.id)) return;
+              activeInvitationActionsRef.current.add(invitation.id);
               setCancellingInvitationId(invitation.id);
               try {
                 const { data, error } = await supabase.functions.invoke(
-                  "staff-invitations-cancel",
-                  {
-                    body: { staff_invitation_id: invitation.id },
-                  },
+                  "staff-invitations-cancel", { body: { staff_invitation_id: invitation.id } },
                 );
-
                 if (error) {
-                  Alert.alert(
-                    "Equipo",
-                    getUserFacingAuthError(
-                      error,
-                      "No se pudo cancelar la invitación.",
-                    ),
-                  );
+                  const detail = await readFunctionError(error);
+                  Alert.alert("Equipo", getInviteErrorMessage(
+                    detail ? { message: detail } : error,
+                    "No se pudo cancelar la invitación.",
+                  ));
                   return;
                 }
-
-                Alert.alert(
-                  "Equipo",
-                  String(
-                    (data as { message?: string })?.message ??
-                      "Invitación cancelada correctamente.",
-                  ),
-                );
-                await loadInvitations();
+                const response = data as {
+                  ok?: boolean; status?: string; invitation_id?: string;
+                  error?: string; message?: string;
+                } | null;
+                if (response?.error || response?.ok !== true ||
+                    response?.status !== "cancelled" || response?.invitation_id !== invitation.id) {
+                  Alert.alert("Equipo", getInviteErrorMessage(
+                    { message: response?.error || "El servidor no confirmó la cancelación." },
+                    "No se pudo cancelar la invitación.",
+                  ));
+                  return;
+                }
+                Alert.alert("Equipo", response.message || "Invitación cancelada correctamente.");
+                await loadInvitations({ force: true });
               } catch (err) {
                 console.error("Cancel invitation error:", err);
-                Alert.alert(
-                  "Equipo",
-                  getUserFacingAuthError(
-                    err,
-                    "No se pudo cancelar la invitación.",
-                  ),
-                );
+                Alert.alert("Equipo", getInviteErrorMessage(
+                  err, "No se pudo cancelar la invitación.",
+                ));
               } finally {
+                activeInvitationActionsRef.current.delete(invitation.id);
                 setCancellingInvitationId(null);
               }
             },
@@ -377,7 +391,7 @@ export function useTeamInvitations({
         ],
       );
     },
-    [canManageTeam, loadInvitations],
+    [canManageTeam, getInviteErrorMessage, loadInvitations, readFunctionError],
   );
 
   return {
