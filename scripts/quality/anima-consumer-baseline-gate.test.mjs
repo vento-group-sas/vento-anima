@@ -1210,6 +1210,22 @@ test('GAP-PKG-004: entrada confirmada advierte tracking no disponible sin cierre
   assert.equal(tracked.length, 0, 'No mostrar alarma si el tracking funciona');
 });
 
+test('GAP-PKG-004: salida sin ubicación ofrece soporte sin confirmar un check-out', () => {
+  const source = fs.readFileSync(new URL('../../src/hooks/use-attendance.ts', import.meta.url), 'utf8');
+  const start = source.indexOf('  const checkOut = useCallback');
+  const gate = source.indexOf('      if (!geo.canProceed) {', start);
+  const location = source.indexOf('      const location = geo.location', gate);
+  assert.ok(start >= 0 && gate > start && location > gate, 'El checkout requiere geocerca');
+  const blocked = source.slice(gate, location);
+  assert.match(blocked, /Tu turno continúa abierto y no se ha creado ninguna salida/u);
+  assert.match(blocked, /router\.push\("\/support"\)/u, 'Puede solicitar ayuda desde Soporte');
+  assert.match(blocked, /return \{ success: false/u, 'La falta de GPS nunca confirma la salida');
+  assert.doesNotMatch(blocked, /insertAttendanceLogWithRetry|enqueuePendingAttendanceEvent/u,
+    'No insertar ni encolar salidas al fallar el guard territorial');
+  const successPath = source.indexOf('await insertAttendanceLogWithRetry(payload)', location);
+  assert.ok(successPath > location, 'Solo la verificación exitosa habilita guardar la salida');
+});
+
 test('GAP-PKG-004: geocerca fuera de sede bloquea insercion de entrada', async () => {
   const source = fs.readFileSync(new URL('../../src/hooks/use-attendance.ts', import.meta.url), 'utf8');
   const checkIn = source.indexOf('const checkIn = useCallback');
