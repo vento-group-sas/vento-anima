@@ -454,40 +454,48 @@ test('GAP-PKG-004 does not expose a scheduled auto-checkout disabled by the serv
 
 // GAP-PKG-004: contratos verificables de permisos. Son invariantes de codigo,
 // no sustituyen QA Android/iOS con consentimientos y cambios de estado reales.
-test('GAP-PKG-004: check-in exige foreground preciso sin background obligatorio', () => {
+test('GAP-PKG-004: check-in requiere GPS preciso y autorización background previa', () => {
   const source = fs.readFileSync(new URL('../../src/hooks/use-attendance.ts', import.meta.url), 'utf8');
   const start = source.indexOf('const checkIn = useCallback');
   const end = source.indexOf('const geo = await ensureActionGeofenceReady({', start);
-  assert.ok(start >= 0 && end > start, 'Debe existir el preflight de check-in');
+  assert.ok(start >= 0 && end > start, 'Debe existir el preflight de entrada');
   const preflight = source.slice(start, end);
   assert.match(preflight, /Location\.getForegroundPermissionsAsync\(\)/u);
   assert.match(preflight, /Location\.requestForegroundPermissionsAsync\(\)/u);
   assert.match(preflight, /foreground\.android\?\.accuracy\s*!==\s*"fine"/u);
   assert.match(preflight, /Location\.hasServicesEnabledAsync\(\)/u);
-  assert.doesNotMatch(preflight, /ensureAttendanceBackgroundLocationPermission/u);
-  assert.doesNotMatch(preflight, /requestBackgroundPermissionsAsync/u);
+  assert.match(preflight, /if \(!await ensureAttendanceBackgroundLocationPermission\(\)\)/u,
+    'El permiso background debe preceder la verificación de geocerca y cualquier escritura');
+  assert.match(preflight, /Alert\.alert\(/u, 'Explicar el propósito antes del consentimiento');
+  assert.match(preflight, /ensureAttendanceBackgroundLocationPermission\(\{ request: true \}\)/u,
+    'El consentimiento background debe ser una acción expresa');
+  assert.match(preflight, /Entrada no registrada:/u, 'Denegar permisos bloquea la nueva entrada');
+  assert.doesNotMatch(preflight, /startAttendanceBackgroundLocation\(/u,
+    'No iniciar seguimiento continuo antes del turno confirmado');
+  const insert = source.indexOf('await insertAttendanceLogWithRetry(payload)', end);
+  assert.ok(insert > end, 'La escritura solo ocurre después de los permisos y la geocerca');
 });
 
-test('GAP-PKG-004: permiso background es opcional y se activa solo con turno verificado', () => {
+test('GAP-PKG-004: tracking comienza solo con turno confirmado y permisos reales', () => {
   const file = fs.readFileSync(
     new URL('../../src/hooks/attendance/background-location-task.ts', import.meta.url), 'utf8');
   const start = file.indexOf('export async function startAttendanceBackgroundLocation(');
   const end = file.indexOf('export async function stopAttendanceBackgroundLocation(', start);
-  assert.ok(start >= 0 && end > start, 'Se necesita la implementacion de seguimiento');
+  assert.ok(start >= 0 && end > start, 'Debe existir el contrato de seguimiento');
   const body = file.slice(start, end);
   const shiftProof = body.indexOf('latestLog?.action !== "check_in"');
   const markerClear = body.indexOf('await SecureStore.deleteItemAsync(BG_LOCAL_CHECKOUT_KEY)');
   const permissionGate = body.indexOf('const permissionGranted = await ensureAttendanceBackgroundLocationPermission()');
   assert.ok(shiftProof >= 0 && markerClear > shiftProof && permissionGate > markerClear,
-    'Solo un turno real habilita el seguimiento opcional; permiso puede concederse despues');
+    'Turno confirmado primero, permiso real después; ningún GPS antes de turno');
   const settings = fs.readFileSync(
     new URL('../../app/account-settings.tsx', import.meta.url), 'utf8');
-  assert.match(settings, /Seguimiento opcional durante el turno/u);
-  assert.match(settings, /Rechazar este permiso no impide registrar entrada o salida/u);
+  assert.match(settings, /Ubicacion de turno requerida para entrar/u);
+  assert.match(settings, /No se registraran nuevas entradas sin permiso preciso y de segundo plano/u);
   assert.match(settings, /ensureAttendanceBackgroundLocationPermission\(\{ request: true \}\)/u);
 });
 
-test('GAP-PKG-004: capacidades nativas opcionales conservadas sin otorgar permiso runtime', () => {
+test('GAP-PKG-004: capacidades nativas declaradas sin conceder permiso runtime', () => {
   const expo = fs.readFileSync(new URL('../../app.config.js', import.meta.url), 'utf8');
   const manifestUrl = new URL('../../android/app/src/main/AndroidManifest.xml', import.meta.url);
   assert.match(expo, /isAndroidBackgroundLocationEnabled:\s*true/u);
@@ -503,7 +511,8 @@ test('GAP-PKG-004: capacidades nativas opcionales conservadas sin otorgar permis
   }
   const policy = fs.readFileSync(
     new URL('../../docs/ANIMA-SHIFT-POLICY-CONFIG-SIN-BUILD.md', import.meta.url), 'utf8');
-  assert.match(policy, /El permiso de ubicación permanente\/en segundo plano no es requisito/u);
+  assert.match(policy, /permiso de ubicación en segundo plano/u);
+  assert.match(policy, /Si se deniegan, revocan o no están disponibles, fallar cerrado/u);
   assert.match(policy, /Autocierre no habilitado/u);
 });
 
@@ -1179,39 +1188,26 @@ test('GAP-PKG-004 QA Android verifica unicamente host/puerto local y GoTrue ante
     'El login QA sintetico no puede enviar credenciales antes del healthcheck');
 });
 
-test('GAP-PKG-004: permiso background denegado no muestra falsa alarma tras check-in', async () => {
+test('GAP-PKG-004: entrada confirmada advierte tracking no disponible sin cierre automático', async () => {
   const source = fs.readFileSync(new URL('../../src/hooks/use-attendance.ts', import.meta.url), 'utf8');
-  const marker = source.indexOf('// El seguimiento background es voluntario');
+  const marker = source.indexOf('// La entrada ya se confirmo: advertir si el seguimiento autorizado falla.');
   const begin = source.indexOf('      if (!trackingActive) {', marker);
   const end = source.indexOf('      await Haptics.notificationAsync', begin);
   const nativeStart = source.indexOf('startAttendanceBackgroundLocation({ confirmedNewCheckIn: true })');
   assert.ok(marker >= 0 && nativeStart >= 0 && nativeStart < marker && begin > marker && end > begin,
-    'El flujo nativo verifica turno y limpia marcador antes de distinguir permiso opcional');
+    'El tracking debe comprobarse después de confirmar la entrada');
   const branch = source.slice(begin, end);
-  assert.match(branch, /Location\.getBackgroundPermissionsAsync\(\)/u);
-  assert.doesNotMatch(branch, /requestBackgroundPermissionsAsync/u,
-    'Un check-in nunca debe solicitar permiso background por sorpresa');
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-  const checkBranch = new AsyncFunction('trackingActive', 'Location', 'Alert', 'console', branch);
-  const run = async ({ status = 'denied', active = false, permissionError = false } = {}) => {
-    const alerts = [];
-    const warnings = [];
-    await checkBranch(active, {
-      getBackgroundPermissionsAsync: async () => {
-        if (permissionError) throw new Error('optional-permission-query-failed');
-        return { status };
-      },
-    }, { alert: (...args) => alerts.push(args) }, { warn: (...args) => warnings.push(args) });
-    return { alerts, warnings };
-  };
-  assert.equal((await run()).alerts.length, 0, 'Denegar background nunca bloquea ni alarma');
-  assert.equal((await run({ active: true, status: 'granted' })).alerts.length, 0,
-    'No hay advertencia con seguimiento ya activo');
-  const grantedButUnavailable = await run({ status: 'granted' });
-  assert.equal(grantedButUnavailable.alerts.length, 1, 'Advertir fallo solo con permiso concedido');
-  assert.match(grantedButUnavailable.alerts[0][0], /seguimiento opcional/u);
-  assert.equal((await run({ permissionError: true })).alerts.length, 0,
-    'Una consulta fallida no convierte seguimiento opcional en requisito');
+  const execute = new AsyncFunction('trackingActive', 'Alert', branch);
+  const alerts = [];
+  await execute(false, { alert: (...args) => alerts.push(args) });
+  assert.equal(alerts.length, 1, 'Una tarea no iniciada debe informar al trabajador');
+  assert.match(alerts[0][0], /seguimiento no disponible/u);
+  assert.match(alerts[0][1], /entrada quedo registrada/u);
+  assert.match(alerts[0][1], /no se realizara un checkout automatico/u);
+  const tracked = [];
+  await execute(true, { alert: (...args) => tracked.push(args) });
+  assert.equal(tracked.length, 0, 'No mostrar alarma si el tracking funciona');
 });
 
 test('GAP-PKG-004: geocerca fuera de sede bloquea insercion de entrada', async () => {
