@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import * as Haptics from "expo-haptics"
 import * as Location from "expo-location"
-import { Alert, AppState } from "react-native"
+import { Alert, AppState, Platform } from "react-native"
 
 import {
   evaluateAttendanceQueueSyncDecision,
@@ -72,7 +72,6 @@ import { useAuth } from "@/contexts/auth-context"
 import {
   asMillis,
   ATTENDANCE_GEOFENCE,
-  ATTENDANCE_RECONCILE_WINDOW_MS,
   ATTENDANCE_SYNC_INTERVAL_MS,
   ATTENDANCE_SYNC_MAX_RETRY_DELAY_MS,
   ATTENDANCE_UX_MESSAGES,
@@ -134,6 +133,47 @@ type LastAttendanceLogSnapshot = {
   shift_id: string | null
   client_event_id: string | null
   pending?: boolean
+}
+
+// An uncertain write is confirmed only by its unique persisted client event.
+// A nearby check-in or check-out is never evidence that THIS write succeeded.
+function reconcileAttendanceWriteConfirmed(
+  latest: Pick<LastAttendanceLogSnapshot, "action" | "site_id" | "source" | "client_event_id"> | null,
+  payload: AttendanceInsertPayload
+): boolean {
+  const eventId = payload.device_info?.clientEventId
+  return (
+    !!latest &&
+    typeof eventId === "string" &&
+    eventId.length > 0 &&
+    latest.client_event_id === eventId &&
+    latest.action === payload.action &&
+    latest.site_id === payload.site_id &&
+    latest.source === payload.source
+  )
+}
+
+// The queue may be discarded as a duplicate ONLY if the exact queued event
+// was persisted. A same-action/same-site last log is not proof of identity.
+function guardQueuedAttendanceDrop(
+  decision: QueueSyncDecision,
+  item: PendingAttendanceEvent,
+  last: LastAttendanceLogSnapshot | null
+): QueueSyncDecision {
+  if (decision.kind !== "drop") return decision
+  const payloadEventId = item.payload.device_info?.clientEventId
+  if (
+    typeof item.eventId === "string" &&
+    item.eventId.length > 0 &&
+    payloadEventId === item.eventId &&
+    reconcileAttendanceWriteConfirmed(last, item.payload)
+  ) {
+    return decision
+  }
+  return {
+    kind: "conflict",
+    reason: "El estado del turno ya cambio, pero no hay evidencia de que este evento pendiente se haya aplicado. Requiere revision; no se descarta automaticamente.",
+  }
 }
 
 function isSameLocalDay(left: Date, right: Date) {
@@ -360,7 +400,7 @@ export function useAttendance() {
 
     const { data, error } = await supabase
       .from("attendance_logs")
-      .select("action, occurred_at, site_id, source, shift_id, device_info, sites(name)")
+      .select("action, occurred_at, site_id, source, shift_id, client_event_id, device_info, sites(name)")
       .eq("employee_id", user.id)
       .order("occurred_at", { ascending: false })
       .order("created_at", { ascending: false })
@@ -376,7 +416,7 @@ export function useAttendance() {
       site_name: (data.sites as any)?.name ?? null,
       source: data.source ?? null,
       shift_id: (data as any)?.shift_id ?? null,
-      client_event_id: (data as any)?.device_info?.clientEventId ?? null,
+      client_event_id: (data as any)?.client_event_id ?? (data as any)?.device_info?.clientEventId ?? null,
     }
   }, [user])
 
@@ -500,8 +540,9 @@ export function useAttendance() {
 
   const setAndPersistPendingAttendanceQueue = useCallback(
     async (nextQueue: PendingAttendanceEvent[]) => {
-      setPendingAttendanceQueue(nextQueue)
+      // No publicar un turno en cola si SecureStore fallo al persistirlo.
       await persistPendingAttendanceQueue(nextQueue)
+      setPendingAttendanceQueue(nextQueue)
     },
     [persistPendingAttendanceQueue]
   )
@@ -635,33 +676,40 @@ export function useAttendance() {
         throw createSupabaseAuthSessionUnavailableError("attendance insert")
       }
 
+      const eventId = payload.device_info?.clientEventId
+      if (typeof eventId !== "string" || eventId.trim().length === 0) {
+        throw new Error("ATTENDANCE_EVENT_ID_MISSING: clientEventId requerido")
+      }
       let lastError: unknown = null
 
       for (let attempt = 1; attempt <= ATTENDANCE_WRITE_MAX_ATTEMPTS; attempt++) {
-        const { error } = await supabase.from("attendance_logs").insert(payload)
+        // Persistir la misma identidad en la columna con indice UNIQUE del
+        // servidor y en device_info. No generar otro ID al reintentar.
+        const { error } = await supabase.from("attendance_logs").insert({
+          ...payload,
+          client_event_id: eventId,
+        })
         if (!error) return
 
         lastError = error
-        const isOfflineLike = isLikelyOfflineError(error)
-        if (!isOfflineLike) break
-
-        // Reconciliación: puede haber quedado insertado aunque falle la respuesta.
+        // Incluso una respuesta de secuencia o duplicado puede corresponder
+        // a una primera escritura aplicada cuyo ACK se perdio. Solo el evento
+        // exacto y visible bajo RLS permite confirmarlo.
         try {
-          const latest = await getLastAttendanceLog()
-          if (
-            latest &&
-            latest.action === payload.action &&
-            latest.site_id === payload.site_id &&
-            latest.source === payload.source &&
-            (latest.client_event_id === (payload.device_info as any)?.clientEventId ||
-              Date.now() - new Date(latest.occurred_at).getTime() <= ATTENDANCE_RECONCILE_WINDOW_MS)
-          ) {
+          const { data: persisted, error: reconcileError } = await supabase
+            .from("attendance_logs")
+            .select("action, site_id, source, client_event_id")
+            .eq("employee_id", session.user.id)
+            .eq("client_event_id", eventId)
+            .maybeSingle()
+          if (!reconcileError && reconcileAttendanceWriteConfirmed(persisted, payload)) {
             return
           }
         } catch {
-          // Best effort.
+          // Sin evidencia verificable no se declara la escritura exitosa.
         }
 
+        if (!isLikelyOfflineError(error)) break
         if (attempt < ATTENDANCE_WRITE_MAX_ATTEMPTS) {
           const backoff = ATTENDANCE_WRITE_BASE_DELAY_MS * attempt
           await sleep(backoff)
@@ -670,7 +718,7 @@ export function useAttendance() {
 
       throw lastError
     },
-    [getLastAttendanceLog]
+    []
   )
 
   const getSiteNameFromEmployeeSites = useCallback(
@@ -1225,17 +1273,87 @@ export function useAttendance() {
   const evaluateQueueSyncDecision = useCallback(
     async (item: PendingAttendanceEvent): Promise<QueueSyncDecision> => {
       const last = await getLastAttendanceLog()
-      return evaluateAttendanceQueueSyncDecision(item, last)
+      const decision = evaluateAttendanceQueueSyncDecision(item, last)
+      return guardQueuedAttendanceDrop(decision, item, last)
     },
     [getLastAttendanceLog]
   )
 
   const syncAttendanceEventOnServer = useCallback(
-    async (item: PendingAttendanceEvent): Promise<SyncResultItem> =>
-      syncAttendanceEventOnServerHelper({
+    async (item: PendingAttendanceEvent): Promise<SyncResultItem> => {
+      const result = await syncAttendanceEventOnServerHelper({
         item,
         insertAttendanceLogWithRetry,
-      }),
+      })
+      if (result.result !== "duplicate" && result.result !== "conflict") return result
+      const serverConflict = result.result === "conflict"
+
+      // El PostgreSQL aislado devuelve "conflict" incluso al reintentar un
+      // evento aplicado: el trigger de secuencia se ejecuta antes de UNIQUE.
+      // Solo el registro exacto visible bajo RLS confirma un replay genuino.
+      const eventId = item.eventId
+      if (
+        typeof eventId !== "string" ||
+        eventId.length === 0 ||
+        item.payload.device_info?.clientEventId !== eventId
+      ) {
+        return {
+          eventId: item.eventId,
+          result: "conflict",
+          message: "Identidad inconsistente del evento de asistencia en cola.",
+        }
+      }
+
+      const session = await getSupabaseAuthSession("attendance duplicate verification")
+      if (!session?.user?.id) {
+        return serverConflict
+          ? result
+          : {
+              eventId,
+              result: "error",
+              message: "No se pudo verificar la sesion del evento duplicado.",
+            }
+      }
+
+      try {
+        const { data: persisted, error } = await supabase
+          .from("attendance_logs")
+          .select("action, site_id, source, client_event_id")
+          .eq("employee_id", session.user.id)
+          .eq("client_event_id", eventId)
+          .maybeSingle()
+
+        if (error) {
+          return serverConflict
+            ? result
+            : {
+                eventId,
+                result: "error",
+                message: "No se pudo verificar el evento duplicado en el servidor.",
+              }
+        }
+        if (!reconcileAttendanceWriteConfirmed(persisted, item.payload)) {
+          return serverConflict
+            ? result
+            : {
+                eventId,
+                result: "conflict",
+                message: "El servidor reporto duplicado sin registro coincidente. Requiere revision.",
+              }
+        }
+      } catch {
+        return serverConflict
+          ? result
+          : {
+              eventId,
+              result: "error",
+              message: "Fallo al consultar la identidad del evento duplicado.",
+            }
+      }
+
+      // Aplicacion confirmada por clave exacta, no por secuencia o tiempo.
+      return { ...result, result: "duplicate" }
+    },
     [insertAttendanceLogWithRetry]
   )
 
@@ -1795,6 +1913,22 @@ export function useAttendance() {
     let lastGeo: GeofenceCheckState | null = null
 
     try {
+      // El check-in exige ubicación precisa EN USO y verificación de sede.
+      // El seguimiento en segundo plano es opcional y nunca bloquea asistencia.
+      let foreground = await Location.getForegroundPermissionsAsync()
+      if (foreground.status !== "granted" && foreground.canAskAgain) {
+        foreground = await Location.requestForegroundPermissionsAsync()
+      }
+      if (foreground.status !== "granted" ||
+          (Platform.OS === "android" && foreground.android?.accuracy !== "fine")) {
+        return {
+          success: false,
+          error: "Activa ubicación precisa mientras usas ANIMA para registrar tu entrada. El seguimiento en segundo plano es opcional.",
+        }
+      }
+      if (!await Location.hasServicesEnabledAsync()) {
+        return { success: false, error: "Activa el GPS antes de verificar la sede y registrar la entrada." }
+      }
       const geo = await ensureActionGeofenceReady({
         mode: "check_in",
         refreshGeofence,
@@ -1818,15 +1952,14 @@ export function useAttendance() {
       if (!geo.siteId) {
         return { success: false, error: "No se pudo determinar la sede" }
       }
-
-      const backgroundLocationGranted =
-        await ensureAttendanceBackgroundLocationPermission()
-      if (!backgroundLocationGranted) {
-        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
+      // SDK 54 no expone la precisión autorizada de iOS: se exige además
+      // una lectura válida con margen real suficiente para la geocerca.
+      const accuracyMeters = geo.location?.accuracy
+      if (accuracyMeters == null || !Number.isFinite(accuracyMeters) ||
+          accuracyMeters > SHIFT_DEPARTURE_TRACKING.maxAccuracyMeters) {
         return {
           success: false,
-          error:
-            "Debes permitir ubicacion siempre para iniciar turno. ANIMA la usa solo durante el turno activo.",
+          error: "No se pudo verificar ubicación precisa. Activa Precisión exacta en Ajustes y espera una lectura GPS válida.",
         }
       }
 
@@ -1882,11 +2015,36 @@ export function useAttendance() {
       await insertAttendanceLogWithRetry(payload)
 
       setIsOffline(false)
-
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
-
       await loadTodayAttendance()
       applyOptimisticAttendanceUpdate(payload, geo.siteName ?? null)
+
+      // Nunca informar que hay seguimiento sin verificar el registro nativo.
+      // La entrada ya esta persistida: un fallo aqui no puede fingir rollback.
+      let trackingActive = false
+      try {
+        trackingActive = await startAttendanceBackgroundLocation({ confirmedNewCheckIn: true })
+      } catch (error) {
+        console.warn("[ATTENDANCE][BG_LOCATION] No se pudo iniciar seguimiento de turno:", error)
+      }
+      // El seguimiento background es voluntario: no alertar al negar el permiso.
+      // Mantener startAttendanceBackgroundLocation arriba limpia el checkout previo.
+      if (!trackingActive) {
+        let backgroundPermissionGranted = false
+        try {
+          backgroundPermissionGranted =
+            (await Location.getBackgroundPermissionsAsync()).status === "granted"
+        } catch (error) {
+          console.warn("[ATTENDANCE][BG_LOCATION] Permiso opcional no verificable:", error)
+        }
+        if (backgroundPermissionGranted) {
+          Alert.alert(
+            "Turno abierto: seguimiento opcional no disponible",
+            "Tu entrada quedó registrada. Autorizaste la ubicación en segundo plano, pero el seguimiento no pudo iniciarse. Puedes registrar tu salida manualmente; no se realizará un cierre automático.",
+          )
+        }
+      }
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+
       setAttendanceDiagnostics((prev) => ({
         ...prev,
         lastCheckInDurationMs: Date.now() - checkInStartedAt,
@@ -1956,8 +2114,20 @@ export function useAttendance() {
             }),
           },
         })
-        await enqueuePendingAttendanceEvent(payload, err)
+        try {
+          await enqueuePendingAttendanceEvent(payload, err)
+        } catch (queueError) {
+          console.warn("[ATTENDANCE][QUEUE] Entrada offline no persistida:", queueError)
+          return {
+            success: false,
+            error: "No se pudo guardar la entrada pendiente. Restablece la conexión e inténtalo nuevamente.",
+          }
+        }
         applyOptimisticAttendanceUpdate(payload, lastGeo.siteName ?? null)
+        Alert.alert(
+          "Entrada pendiente de sincronizar",
+          "Se guardó la entrada sin conexión, pero ANIMA no puede confirmar el seguimiento en segundo plano hasta que se sincronice. Mantén la aplicación abierta y revisa la conexión. Informa al responsable si el aviso persiste; no se cerrará el turno automáticamente.",
+        )
         return {
           success: true,
           queued: true,
@@ -2061,59 +2231,77 @@ export function useAttendance() {
         },
       })
 
-      applyOptimisticAttendanceUpdate(payload, lastLog.site_name ?? null)
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+      // No confirmar ni cerrar localmente un turno hasta que la salida este
+      // persistida en Supabase o aceptada por la cola offline autorizada.
+      let queued = false
+      try {
+        await insertAttendanceLogWithRetry(payload)
+        setIsOffline(false)
+      } catch (err) {
+        const offline = isLikelyOfflineError(err)
+        const friendly = !offline ? getAttendanceErrorMessage(err, "check_out") : null
+        recordDiagnosticError(
+          offline ? "network" : classifyDiagnosticStage(err),
+          friendly ?? getErrorMessage(err)
+        )
+        setIsOffline(offline)
 
-      void (async () => {
-        try {
-          await insertAttendanceLogWithRetry(payload)
-          setIsOffline(false)
-          setAttendanceDiagnostics((prev) => ({
-            ...prev,
-            lastCheckOutDurationMs: Date.now() - checkOutStartedAt,
-          }))
-          await loadTodayAttendance()
-        } catch (err) {
-          const offline = isLikelyOfflineError(err)
-          const friendly = !offline ? getAttendanceErrorMessage(err, "check_out") : null
-
-          if (friendly) {
-            console.warn("Check-out background blocked:", friendly, err)
-          } else {
-            console.error("Check-out background error:", err)
+        const latchValid =
+          !!geo.siteId && (!!geo.canProceed || isLatchValidFor(geo.siteId))
+        if (
+          !geo.siteId ||
+          !canQueueByPolicy({ networkError: offline, latchValid, eventType: "check_out" })
+        ) {
+          return {
+            success: false,
+            error: friendly ?? getUserFacingAttendanceError(err, "No se pudo registrar la salida").message,
           }
-
-          recordDiagnosticError(
-            offline ? "network" : classifyDiagnosticStage(err),
-            friendly ?? getErrorMessage(err)
-          )
-          setIsOffline(offline)
-
-          const latchValid =
-            !!geo.siteId && (!!geo.canProceed || isLatchValidFor(geo.siteId))
-
-          if (
-            geo.siteId &&
-            canQueueByPolicy({ networkError: offline, latchValid, eventType: "check_out" })
-          ) {
-            const queuedPayload = {
-              ...payload,
-              device_info: {
-                ...(payload.device_info ?? {}),
-                queuedAt: new Date().toISOString(),
-              },
-            }
-
-            await enqueuePendingAttendanceEvent(queuedPayload, err)
-            await loadTodayAttendance()
-            return
-          }
-
-          await loadTodayAttendance()
         }
-      })()
 
-      return { success: true, timestamp: payload.occurred_at }
+        const queuedPayload = {
+          ...payload,
+          device_info: {
+            ...(payload.device_info ?? {}),
+            queuedAt: new Date().toISOString(),
+          },
+        }
+        try {
+          await enqueuePendingAttendanceEvent(queuedPayload, err)
+        } catch (queueError) {
+          console.warn("[ATTENDANCE][QUEUE] Salida offline no persistida:", queueError)
+          return {
+            success: false,
+            error: "No se pudo guardar la salida pendiente. Tu turno continúa abierto; restablece la conexión e inténtalo nuevamente.",
+          }
+        }
+        queued = true
+      }
+
+      // Solo una salida confirmada o en cola habilita detener el GPS.
+      // Si SecureStore o Expo fallan, la salida no se deshace ni se finge.
+      try {
+        await stopAttendanceBackgroundLocation({ localCheckout: true })
+      } catch (error) {
+        console.warn("[ATTENDANCE][BG_LOCATION] No se pudo detener al salir:", error)
+        Alert.alert(
+          "Salida registrada: revisa la ubicación",
+          "ANIMA no pudo confirmar que el seguimiento GPS se detuvo. Comprueba los permisos de ubicación de ANIMA en los ajustes del sistema.",
+        )
+      }
+
+      applyOptimisticAttendanceUpdate(payload, lastLog.site_name ?? null)
+      setAttendanceDiagnostics((prev) => ({
+        ...prev,
+        lastCheckOutDurationMs: Date.now() - checkOutStartedAt,
+      }))
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(
+        (error) => console.warn("[ATTENDANCE] Feedback de salida no disponible:", error)
+      )
+      void loadTodayAttendance().catch((error) => {
+        console.warn("[ATTENDANCE] No se pudo actualizar el resumen de salida:", error)
+      })
+
+      return { success: true, queued, timestamp: payload.occurred_at }
     } finally {
       actionInFlightRef.current = false
       setIsLoading(false)
@@ -2299,9 +2487,9 @@ export function useAttendance() {
 
   const { registerOpenShiftDepartureEvent } = useShiftDepartureTracking({
     userId: user?.id,
-    isEmployeeActive: !!employee,
+    isEmployeeActive: !!employee?.isActive,
     attendanceStatus: attendanceState.status,
-    isOnBreak: false,
+    isOnBreak: attendanceState.isOnBreak,
     departureMinCheckIntervalMs: attendancePolicy.shift_departure_min_check_interval_ms,
     departureMaxAccuracyMeters: attendancePolicy.shift_departure_max_accuracy_meters,
     departureThresholdMeters: attendancePolicy.shift_departure_threshold_meters,
@@ -2318,23 +2506,27 @@ export function useAttendance() {
   })
 
   useEffect(() => {
-    if (!user?.id || !employee?.isActive) {
-      void stopAttendanceBackgroundLocation()
+    if (!user?.id || !employee?.isActive || attendanceState.status !== "checked_in") {
+      void stopAttendanceBackgroundLocation().catch((error) => {
+        console.warn("[ATTENDANCE][BG_LOCATION] No se pudo detener fuera del turno:", error)
+      })
       return
     }
 
-    if (attendanceState.status !== "checked_in") {
-      void stopAttendanceBackgroundLocation()
-      return
+    const resumeTracking = () => {
+      void startAttendanceBackgroundLocation().then((started) => {
+        if (!started) {
+          console.warn("[ATTENDANCE][BG_LOCATION] Turno abierto sin seguimiento confirmado; revisar permisos, GPS y conexion.")
+        }
+      }).catch((error) => {
+        console.warn("[ATTENDANCE][BG_LOCATION] No se pudo reanudar seguimiento:", error)
+      })
     }
-
-    void startAttendanceBackgroundLocation()
-
-    return () => {
-      if (attendanceState.status !== "checked_in") {
-        void stopAttendanceBackgroundLocation()
-      }
-    }
+    resumeTracking()
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "active") resumeTracking()
+    })
+    return () => sub.remove()
   }, [attendanceState.status, employee?.isActive, user?.id])
 
   const selectSiteForCheckIn = useCallback(
