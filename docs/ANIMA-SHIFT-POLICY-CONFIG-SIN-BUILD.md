@@ -1,6 +1,22 @@
-# Configuración de turnos (recordatorio y cierre) sin nueva build
+# Recordatorios y política de cierre de turnos — autoridad única
 
-El recordatorio de cierre de turno (“Tu turno está por cerrar”) y el cierre automático **no dependen del código de la app**. Los controla la **Edge Function** `shift-runtime-processor`, que lee la tabla **`shift_policy`**. Puedes cambiar el comportamiento solo con cambios en la base de datos (y, si hace falta, redespliegue de la función).
+**Decisión funcional APROBADA; autocierre por geocerca PENDIENTE DE IMPLEMENTACIÓN Y CERTIFICACIÓN.** El cierre manual o automático deberá confirmarse mediante una transición atómica, idempotente y auditada del servidor, vinculada a una sesión exacta y su turno. ANIMA únicamente propone evidencia de salida; ni la ubicación del teléfono ni la notificación local constituyen por sí mismas un `check_out` confirmado.
+
+`shift-runtime-processor` conserva recordatorios horarios, pero actualmente desactiva expresamente el autocierre por horario (`autoCloseEnabled = false`). Ninguna modificación de `shift_policy` puede activar un cierre temporal mientras esa condición siga vigente. La salida sostenida y validada de geocerca es el único desencadenante aprobado para solicitar un autocierre; los horarios sirven para recordar y abrir revisión, nunca para inventar una salida.
+
+**Estado operativo actual:** cierre manual o administrativo autorizado. Hasta implementar y certificar la transición geográfica del servidor, ANIMA no debe anunciar un autocierre en funcionamiento.
+
+## Contrato vigente de ubicación y permisos — GAP-PKG-004 (2026-10-21)
+
+**Asistencia en primer plano:** ANIMA necesita sesión autenticada, GPS activado, ubicación precisa concedida *mientras se usa la app*, lectura reciente y geocerca válida para registrar entrada o salida. **El permiso de ubicación permanente/en segundo plano no es requisito del check-in ni del check-out.** En Android se rechaza ubicación aproximada cuando no permite validar precisión; en iOS se valida además la precisión efectiva de la muestra. Rechazar segundo plano no invalida una marcación autorizada.
+
+**Seguimiento opcional del turno:** desde Ajustes, la persona puede consentir acceso en segundo plano para recibir advertencias por salida de sede. Este consentimiento se solicita de forma independiente, tras explicar finalidad y duración; no se solicita por defecto durante el check-in. Solo puede iniciar o reanudarse con turno abierto confirmado por servidor y permiso efectivo; debe detenerse ante salida confirmada o intención local de salida persistida pendiente de conciliación. Sin ese permiso, continúa siendo posible la asistencia en primer plano; no se asegura vigilancia ni aviso cuando la app esté suspendida.
+
+**Declaración nativa frente a consentimiento:** las capacidades de segundo plano en `app.config.js` y en `android/app/src/main/AndroidManifest.xml` se conservan **exclusivamente para que el seguimiento opcional pueda funcionar**. Declarar `ACCESS_BACKGROUND_LOCATION`, servicio de ubicación Android o `UIBackgroundModes: location` no concede autorización al usuario ni convierte el seguimiento en obligatorio. Eliminarlas rompería la capacidad opcional; requeriría retirar primero esa función y revisar nuevamente Android/iOS. Cambios nativos necesitan build nueva y revisión de permisos/plataforma.
+
+**Autocierre no habilitado:** las lecturas locales, el monitoreo opcional, las notificaciones y Play Integrity de la app/dispositivo **no certifican por sí solos la posición física ni generan `check_out`**. Cualquier autocierre futuro exige verificador geográfico independiente, transición exclusiva del servidor, control de carreras, idempotencia, pruebas adversariales y autorización expresa. El cierre manual/administrativo sigue disponible conforme a las reglas de asistencia.
+
+**QA necesario para cerrar la fase:** comprobar Android/iOS con ubicación foreground precisa concedida y background denegado; foreground denegado/impreciso; consentimiento opcional y revocación posterior; reinicio durante turno; check-out confirmado y en cola durable; apagado de seguimiento sin sesión/turno; y cero autocierres a partir de GPS del cliente. Distinguir tests estáticos de validación real en dispositivo. Este contrato **no acredita por sí mismo** que la implementación ni GAP-PKG-004 hayan pasado sus gates.
 
 ## Aviso “X minutos antes” de la hora de salida
 
@@ -41,9 +57,21 @@ Cuando el aviso “X min antes” no llega, revisar en este orden:
 
 - **`end_reminder_enabled`** (boolean): si está en `true`, se envía el push “Tu turno está por cerrar” cuando corresponde.
 - **`end_reminder_minutes_before_end`** (int): minutos **antes** de la hora de salida en que empieza la ventana del recordatorio (por defecto 5).
-- **`end_reminder_minutes_after_end`** (int, opcional): minutos **después** de la hora de salida en que aún se puede enviar el recordatorio. Si es `null`, se usa la misma ventana que el autocierre (`auto_checkout_grace_minutes_after_end`). Ejemplo: 15 → recordatorio hasta 15 min después de la hora de salida.
-- **`auto_checkout_grace_minutes_after_end`** (int): minutos después de la hora de salida en que se hace el cierre automático (por defecto 30).
-- **`scheduled_auto_checkout_enabled`** (boolean): si está en `true`, se ejecuta el cierre automático cuando se pasa la ventana de gracia.
+- **`end_reminder_minutes_after_end`** (int, opcional): ventana posterior al horario para el primer recordatorio; no es una ventana de cierre.
+- **`auto_checkout_grace_minutes_after_end`** (int, legado): pese a su nombre, el procesador actual lo utiliza como demora del **recordatorio de seguimiento** después del fin programado (valor por defecto 30 minutos); no cierra asistencia.
+- **`scheduled_auto_checkout_enabled`** (boolean, legado): actualmente ignorado para cierres por `shift-runtime-processor`, que fija `autoCloseEnabled = false`; activar esta columna no crea un `check_out`. No debe usarse como fuente de verdad para anunciar autocierre.
+
+## Única autoridad de autocierre aprobada — contrato objetivo
+
+1. **Evidencia:** durante una sesión laboral abierta, ANIMA observa posiciones sucesivas, válidas y precisas, inequívocamente fuera de la geocerca asociada al turno. La comprobación local actual requiere confirmación sostenida, no una muestra aislada. El cliente solo presenta una propuesta autenticada; no decide el cierre.
+2. **Validación de servidor:** la autoridad deberá verificar identidad, sesión y turno exactos, revisión publicada, sede/punto físico, vigencia y orden temporal de muestras, calidad de GPS, exclusión de señales simuladas y ausencia de excepciones operativas autorizadas (p. ej. trabajo fuera de sede). No podrá aceptar como prueba definitiva campos suministrados únicamente por un cliente no confiable.
+3. **Transición única:** solo el servidor podrá persistir el evento terminal mediante una operación atómica e idempotente. Concurrencia con salida manual, cola offline, segunda instancia del dispositivo o reintentos debe producir a lo sumo un cierre real y respuestas estables. El instante de cierre y su fundamento quedarán auditados; una observación tardía no podrá cerrar retroactivamente una sesión diferente.
+4. **Sin evidencia concluyente:** ubicación imprecisa o simulada, ausencia de GPS, notificaciones desactivadas, falta de conectividad, turno en pausa, salida temporal justificada o jornada aún en trabajo externo **no producen autocierre**. Se genera, según política autorizada, un aviso o caso pendiente de revisión sin convertir la sospecha en horas certificadas.
+5. **Horario:** `shift-runtime-processor` conserva únicamente recordatorios y seguimiento administrativo. El fin programado nunca constituye prueba automática de que el trabajador salió de la sede.
+6. **Experiencia y privacidad:** el trabajador verá separado `turno abierto`, `salida propuesta`, `salida confirmada` y `caso pendiente`; la salida manual seguirá disponible. El seguimiento de ubicación termina con el cierre confirmado o con el evento local de salida durable sujeto a reconciliación, sin rastreo continuo fuera del turno.
+7. **Aceptación obligatoria antes de habilitar:** pruebas QA de dos posiciones separadas, reentrada a geocerca, GPS simulado/impreciso, pausas y excepciones, dos dispositivos, carrera entre autocierre y salida manual, pérdida y recuperación de red, evento duplicado, turno nocturno, retiro de turno, auditoría y residuos sintéticos cero. No se habilitará producción por el éxito aislado de un GPS ADB.
+
+**Implementación:** pendiente de transición y contrato de evidencia en el backend propietario. Hasta que existan y pasen esas pruebas, se mantiene el cierre manual o administrativo; no se ofrece autocierre ficticio.
 
 ## Cómo asegurar que el recordatorio llegue
 
