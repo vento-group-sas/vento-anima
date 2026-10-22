@@ -2062,22 +2062,13 @@ export function useAttendance() {
       } catch (error) {
         console.warn("[ATTENDANCE][BG_LOCATION] No se pudo iniciar seguimiento de turno:", error)
       }
-      // El seguimiento background es voluntario: no alertar al negar el permiso.
-      // Mantener startAttendanceBackgroundLocation arriba limpia el checkout previo.
+      // La entrada ya se confirmo: advertir si el seguimiento autorizado falla.
+      // Nunca fingir rollback ni generar una salida automatica por este fallo.
       if (!trackingActive) {
-        let backgroundPermissionGranted = false
-        try {
-          backgroundPermissionGranted =
-            (await Location.getBackgroundPermissionsAsync()).status === "granted"
-        } catch (error) {
-          console.warn("[ATTENDANCE][BG_LOCATION] Permiso opcional no verificable:", error)
-        }
-        if (backgroundPermissionGranted) {
-          Alert.alert(
-            "Turno abierto: seguimiento opcional no disponible",
-            "Tu entrada quedó registrada. Autorizaste la ubicación en segundo plano, pero el seguimiento no pudo iniciarse. Puedes registrar tu salida manualmente; no se realizará un cierre automático.",
-          )
-        }
+        Alert.alert(
+          "Turno abierto: seguimiento no disponible",
+          "Tu entrada quedo registrada, pero el seguimiento durante el turno no pudo iniciarse. Revisa los permisos o avisa al responsable. Conservas el cierre manual autorizado; no se realizara un checkout automatico.",
+        )
       }
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
 
