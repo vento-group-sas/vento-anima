@@ -340,12 +340,12 @@ export default function AccountSettingsScreen() {
 
   const requestBackgroundLocationPermission = useCallback(() => {
     Alert.alert(
-      "Seguimiento opcional durante el turno",
-      "Solo necesitas ubicación precisa mientras usas ANIMA para registrar asistencia. Opcionalmente, puedes autorizar ubicación en segundo plano para recibir avisos si te alejas de la sede durante un turno abierto. Rechazar este permiso no impide registrar entrada o salida. No activa autocierre.",
+      "Ubicacion durante el turno",
+      "Para registrar una nueva entrada necesitas GPS preciso y acceso a ubicacion en segundo plano. Tras confirmar el turno, ANIMA puede seguir la ubicacion durante la jornada para detectar salidas de sede; se detiene al registrar la salida y nunca hace checkout automatico. Puedes negar el permiso, pero no registrar una nueva entrada hasta autorizarlo.",
       [
         { text: "Ahora no", style: "cancel" },
         {
-          text: "Configurar seguimiento opcional",
+          text: "Configurar ubicacion del turno",
           onPress: () => {
             void (async () => {
               setRequestingBackgroundLocation(true);
@@ -353,8 +353,8 @@ export default function AccountSettingsScreen() {
                 const granted = await ensureAttendanceBackgroundLocationPermission({ request: true });
                 if (!granted) {
                   Alert.alert(
-                    "Seguimiento opcional sin activar",
-                    "Puedes seguir registrando asistencia con ubicación precisa mientras usas ANIMA. El seguimiento en segundo plano no está activo; puedes habilitarlo más adelante.",
+                    "Permiso de turno sin activar",
+                    "No se registraran nuevas entradas sin permiso preciso y de segundo plano. Los turnos ya abiertos conservan la opcion de cierre manual autorizado; la denegacion nunca genera un cierre automatico.",
                     [
                       { text: "Cerrar", style: "cancel" },
                       { text: "Abrir ajustes", onPress: () => void openSystemSettings() },
@@ -364,16 +364,16 @@ export default function AccountSettingsScreen() {
                 }
                 const started = await startAttendanceBackgroundLocation();
                 Alert.alert(
-                  "Seguimiento opcional",
+                  "Ubicacion de turno",
                   started
                     ? "El seguimiento está activo durante el turno y se detendrá al registrar la salida."
-                    : "El permiso está preparado. El seguimiento solo puede comenzar al confirmar un turno abierto con el servidor; puedes registrar asistencia normalmente con GPS preciso.",
+                    : "El permiso esta preparado para registrar una nueva entrada. El seguimiento solo se iniciara cuando el servidor confirme un turno abierto.",
                 );
               } catch (err) {
-                console.warn("[SETTINGS] No se pudo preparar seguimiento opcional:", err);
+                console.warn("[SETTINGS] No se pudo preparar ubicacion de turno:", err);
                 Alert.alert(
-                  "Seguimiento opcional no disponible",
-                  "No se pudo activar el seguimiento. Esto no bloquea una entrada o salida con GPS preciso ni revierte una salida registrada.",
+                  "Ubicacion de turno no disponible",
+                  "No se pudo activar el permiso. Una nueva entrada seguira bloqueada hasta autorizarlo; esto no revierte una salida confirmada ni habilita autocierre.",
                 );
               } finally {
                 await refreshPermissions();
@@ -510,9 +510,9 @@ export default function AccountSettingsScreen() {
           <View style={styles.cardBase}>
             <View style={styles.cardHeaderRow}>
               <View style={styles.cardTitleWrap}>
-                <Text style={styles.cardTitle}>Seguimiento opcional durante el turno</Text>
+                <Text style={styles.cardTitle}>Ubicacion de turno requerida para entrar</Text>
                 <Text style={styles.cardText}>
-                  Para marcar entrada o salida solo necesitas GPS preciso mientras usas ANIMA. El seguimiento en segundo plano es opcional y sirve para avisarte cuando te alejas durante el turno. Rechazarlo no bloquea la asistencia ni activa autocierre.
+                  Para iniciar un turno necesitas GPS preciso y autorizacion de segundo plano. El seguimiento solo funciona con el turno confirmado; termina al salir. Rechazar este permiso bloquea nuevas entradas, pero no provoca un cierre automatico ni invalida una salida registrada.
                 </Text>
               </View>
               <View
@@ -539,8 +539,8 @@ export default function AccountSettingsScreen() {
               ) : (
                 <Text style={styles.primaryActionText}>
                   {backgroundLocationStatus === "granted"
-                    ? "Verificar seguimiento opcional"
-                    : "Activar seguimiento opcional"}
+                    ? "Verificar ubicacion de turno"
+                    : "Autorizar ubicacion de turno"}
                 </Text>
               )}
             </TouchableOpacity>
