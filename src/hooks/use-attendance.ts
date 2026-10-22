@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import * as Haptics from "expo-haptics"
 import * as Location from "expo-location"
-import { Alert, AppState, Platform } from "react-native"
+import { Alert, AppState, Linking, Platform } from "react-native"
 
 import {
   evaluateAttendanceQueueSyncDecision,
@@ -1913,8 +1913,8 @@ export function useAttendance() {
     let lastGeo: GeofenceCheckState | null = null
 
     try {
-      // El check-in exige ubicación precisa EN USO y verificación de sede.
-      // El seguimiento en segundo plano es opcional y nunca bloquea asistencia.
+      // Exigir ubicacion precisa y permiso background ANTES de registrar entrada.
+      // El seguimiento solo inicia tras confirmar un turno abierto en servidor.
       let foreground = await Location.getForegroundPermissionsAsync()
       if (foreground.status !== "granted" && foreground.canAskAgain) {
         foreground = await Location.requestForegroundPermissionsAsync()
@@ -1923,11 +1923,47 @@ export function useAttendance() {
           (Platform.OS === "android" && foreground.android?.accuracy !== "fine")) {
         return {
           success: false,
-          error: "Activa ubicación precisa mientras usas ANIMA para registrar tu entrada. El seguimiento en segundo plano es opcional.",
+          error: "Activa ubicación precisa mientras usas ANIMA. Para una nueva entrada también debes autorizar ubicación durante el turno en segundo plano.",
         }
       }
       if (!await Location.hasServicesEnabledAsync()) {
         return { success: false, error: "Activa el GPS antes de verificar la sede y registrar la entrada." }
+      }
+      if (!await ensureAttendanceBackgroundLocationPermission()) {
+        // El usuario decide si acepta. Android 11+ puede abrir ajustes del SO.
+        // Nunca se solicita ni inicia tracking continuo sin turno confirmado.
+        Alert.alert(
+          "Ubicacion durante el turno requerida",
+          "Para registrar una nueva entrada necesitas ubicacion precisa y permiso para usarla en segundo plano durante el turno abierto. El seguimiento termina al registrar salida y no realiza cierres automaticos.",
+          [
+            { text: "Ahora no", style: "cancel" },
+            {
+              text: "Configurar permiso",
+              onPress: () => {
+                void (async () => {
+                  const permission = await Location.getBackgroundPermissionsAsync()
+                  if (permission.canAskAgain === false) {
+                    await Linking.openSettings()
+                    return
+                  }
+                  const granted = await ensureAttendanceBackgroundLocationPermission({ request: true })
+                  if (!granted) {
+                    Alert.alert(
+                      "Permiso no disponible",
+                      "Comprueba la ubicacion precisa y el acceso en segundo plano desde los ajustes de ANIMA. No se registro ninguna entrada.",
+                    )
+                  }
+                })().catch((error) => {
+                  console.warn("[ATTENDANCE][BG_LOCATION] No se pudo configurar permiso:", error)
+                })
+              },
+            },
+          ],
+        )
+        return {
+          success: false,
+          error: "Entrada no registrada: habilita ubicacion precisa y acceso en segundo plano; vuelve a intentar el check-in tras autorizarlo.",
+        }
       }
       const geo = await ensureActionGeofenceReady({
         mode: "check_in",
