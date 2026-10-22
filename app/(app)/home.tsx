@@ -599,6 +599,7 @@ export default function HomeScreen() {
           cardStyle={UI.card}
           cardTintStyle={UI.cardTint}
           canRegister={canRegister}
+          isGeofenceBlocked={attendanceUxState === "blocked"}
           isLoading={isLoading}
           isGeoChecking={isGeoChecking}
           isCheckActionLocked={isCheckActionLocked}
@@ -606,6 +607,9 @@ export default function HomeScreen() {
           ctaPrimaryLabel={ctaPrimaryLabel}
           ctaSecondaryLabel={ctaSecondaryLabel}
           onCheck={handleCheck}
+          onRevalidateBlockedLocation={() => {
+            void refreshGeofence({ force: true, source: "user" })
+          }}
         />
 
         <TodaySummaryCard
