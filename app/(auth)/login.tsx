@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import Constants from "expo-constants";
 import {
   Alert,
   Dimensions,
@@ -6,6 +7,7 @@ import {
   Platform,
   ScrollView,
   StyleSheet,
+  Text,
 } from "react-native";
 import type { TextInput as RNTextInput } from "react-native";
 import Animated, {
@@ -30,6 +32,27 @@ import { ANIMA_RUNTIME } from "@/brand/anima/config/runtime";
 
 export default function LoginScreen() {
   const { signIn } = useAuth();
+  const qaEndpoint = useMemo(() => {
+    if (!__DEV__ || Constants.expoConfig?.extra?.appVariant !== "development") return null;
+    const configuredUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+    if (!configuredUrl) {
+      return { label: "QA • Falta configurar Supabase", qaLocalRoute: false };
+    }
+    try {
+      const url = new URL(configuredUrl);
+      const port = url.port || (url.protocol === "https:" ? "443" : "80");
+      // Perfil QA GAP-PKG-004: unico puerto aislado; Android usa 10.0.2.2 o ADB reverse.
+      const qaLocalRoute = url.protocol === "http:" && port === "23151" &&
+        ["10.0.2.2", "127.0.0.1", "localhost"].includes(url.hostname) &&
+        !url.username && !url.password && url.pathname === "/" && !url.search && !url.hash;
+      if (qaLocalRoute) {
+        return { label: `QA • API ${url.hostname}:${port} (HTTP sin verificar)`, qaLocalRoute: true };
+      }
+      return { label: "QA • API fuera del perfil local aislado", qaLocalRoute: false };
+    } catch {
+      return { label: "QA • URL de Supabase inválida", qaLocalRoute: false };
+    }
+  }, []);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -37,6 +60,45 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [retryAfterSeconds, setRetryAfterSeconds] = useState(0);
+  const [qaHttpHealth, setQaHttpHealth] = useState<"REACHABLE" | "UNAVAILABLE" | null>(null);
+
+  // Development-only read-only probe from Android, not from the Windows host.
+  // A configured API URL alone cannot attest an actual HTTP response.
+  useEffect(() => {
+    if (!qaEndpoint?.qaLocalRoute) return;
+    const apiUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+    const publicKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+    if (!apiUrl || !publicKey) {
+      setQaHttpHealth("UNAVAILABLE");
+      return;
+    }
+    const controller = new AbortController();
+    let mounted = true;
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    void fetch(`${apiUrl.replace(/\/+$/u, "")}/auth/v1/health`, {
+      method: "GET",
+      headers: { apikey: publicKey, Accept: "application/json" },
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) return false;
+        const payload: unknown = await response.json();
+        return typeof payload === "object" && payload !== null &&
+          (payload as { name?: unknown }).name === "GoTrue";
+      })
+      .then((verified) => {
+        if (mounted) setQaHttpHealth(verified ? "REACHABLE" : "UNAVAILABLE");
+      })
+      .catch(() => {
+        if (mounted) setQaHttpHealth("UNAVAILABLE");
+      })
+      .finally(() => clearTimeout(timeout));
+    return () => {
+      mounted = false;
+      controller.abort();
+      clearTimeout(timeout);
+    };
+  }, [qaEndpoint?.qaLocalRoute]);
 
   const passwordRef = useRef<RNTextInput>(null);
   const loginInFlightRef = useRef(false);
@@ -143,6 +205,11 @@ export default function LoginScreen() {
   const handleLogin = async () => {
     const trimmedEmail = email.trim();
     if (!trimmedEmail || !password || loading || loginInFlightRef.current || retryAfterSeconds > 0) {
+      return;
+    }
+    if (qaEndpoint && trimmedEmail.toLowerCase().endsWith("@example.invalid") &&
+        (!qaEndpoint.qaLocalRoute || qaHttpHealth !== "REACHABLE")) {
+      setErrorMsg("QA: GoTrue del entorno aislado no respondió desde Android. No se enviaron credenciales.");
       return;
     }
     if (!/^\S+@\S+\.\S+$/.test(trimmedEmail)) {
@@ -253,6 +320,20 @@ export default function LoginScreen() {
           onSubmit={handleLogin}
           onForgotPasswordPress={handleForgotPassword}
         />
+        {qaEndpoint ? (
+          <>
+            <Text style={styles.qaEndpointLabel}>{qaEndpoint.label}</Text>
+            {qaEndpoint.qaLocalRoute ? (
+              <Text style={styles.qaEndpointLabel}>
+                {qaHttpHealth === null
+                  ? "QA • HTTP desde Android: comprobando"
+                  : qaHttpHealth === "REACHABLE"
+                    ? "QA • GoTrue HTTP desde Android: RESPONDIÓ"
+                    : "QA • GoTrue HTTP desde Android: SIN RESPUESTA"}
+              </Text>
+            ) : null}
+          </>
+        ) : null}
       </ScrollView>
     </Container>
   );
@@ -262,6 +343,12 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: COLORS.porcelain,
+  },
+  qaEndpointLabel: {
+    fontSize: 12,
+    textAlign: "center",
+    color: COLORS.neutral,
+    marginTop: 12,
   },
   page: {
     flexGrow: 1,

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
+import { useAuth } from "@/contexts/auth-context"
 import { supabase } from "@/lib/supabase"
 
 export type AttendancePolicy = {
@@ -28,10 +29,22 @@ const DEFAULT_POLICY: AttendancePolicy = {
 }
 
 export function useAttendancePolicy() {
+  const { user, session, isLoading: authIsLoading } = useAuth()
+  const authenticatedUserId = !authIsLoading && session?.access_token && session.user.id === user?.id
+    ? user.id
+    : null
+  const latestRequestIdRef = useRef(0)
   const [policy, setPolicy] = useState<AttendancePolicy | null>(null)
   const [loaded, setLoaded] = useState(false)
 
   const load = useCallback(async () => {
+    const requestId = ++latestRequestIdRef.current
+    if (!authenticatedUserId) {
+      setPolicy(DEFAULT_POLICY)
+      setLoaded(!authIsLoading)
+      return
+    }
+    setLoaded(false)
     try {
       const { data, error } = await supabase
         .from("attendance_policy")
@@ -41,6 +54,7 @@ export function useAttendancePolicy() {
         .limit(1)
         .maybeSingle()
 
+      if (requestId !== latestRequestIdRef.current) return
       if (error) throw error
       if (data) {
         setPolicy({
@@ -78,15 +92,21 @@ export function useAttendancePolicy() {
         setPolicy(DEFAULT_POLICY)
       }
     } catch (e) {
+      if (requestId !== latestRequestIdRef.current) return
       console.warn("[ATTENDANCE_POLICY] Error loading policy, using defaults:", e)
       setPolicy(DEFAULT_POLICY)
     } finally {
-      setLoaded(true)
+      if (requestId === latestRequestIdRef.current) {
+        setLoaded(true)
+      }
     }
-  }, [])
+  }, [authenticatedUserId, authIsLoading])
 
   useEffect(() => {
-    load()
+    void load()
+    return () => {
+      latestRequestIdRef.current += 1
+    }
   }, [load])
 
   const effective = policy ?? DEFAULT_POLICY
