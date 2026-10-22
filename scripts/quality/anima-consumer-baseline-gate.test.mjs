@@ -1218,12 +1218,43 @@ test('GAP-PKG-004: salida sin ubicación ofrece soporte sin confirmar un check-o
   assert.ok(start >= 0 && gate > start && location > gate, 'El checkout requiere geocerca');
   const blocked = source.slice(gate, location);
   assert.match(blocked, /Tu turno continúa abierto y no se ha creado ninguna salida/u);
-  assert.match(blocked, /router\.push\("\/support"\)/u, 'Puede solicitar ayuda desde Soporte');
+  assert.match(blocked, /pathname:\s*"\/support"[\s\S]*intent:\s*"checkout_review"/u,
+    'La salida denegada debe abrir la solicitud de revisión guiada');
   assert.match(blocked, /return \{ success: false/u, 'La falta de GPS nunca confirma la salida');
   assert.doesNotMatch(blocked, /insertAttendanceLogWithRetry|enqueuePendingAttendanceEvent/u,
     'No insertar ni encolar salidas al fallar el guard territorial');
   const successPath = source.indexOf('await insertAttendanceLogWithRetry(payload)', location);
   assert.ok(successPath > location, 'Solo la verificación exitosa habilita guardar la salida');
+});
+
+test('GAP-PKG-004: revisión de salida prepara ticket editable sin confirmar asistencia', () => {
+  const screen = fs.readFileSync(new URL('../../app/(app)/support.tsx', import.meta.url), 'utf8');
+  assert.match(screen, /intent !== "checkout_review"/u);
+  assert.match(screen, /checkoutReviewPreparedRef\.current = true/u,
+    'La navegación no debe abrir múltiples formularios en el mismo montaje');
+  assert.match(screen, /setTicketTitle\("Revisión de salida sin ubicación"\)/u);
+  assert.match(screen, /setTicketMessage\(\[/u);
+  assert.match(screen, /setIsTicketOpen\(true\)/u,
+    'El trabajador confirma el envío desde el formulario');
+  assert.match(screen, /no registra una salida ni cierra tu turno/u);
+  assert.doesNotMatch(screen, /insertAttendanceLogWithRetry|enqueuePendingAttendanceEvent/u,
+    'El formulario de Soporte nunca escribe asistencia');
+});
+
+test('GAP-PKG-004: ticket confirmado resiste fallo del chat sin inventar salida', () => {
+  const source = fs.readFileSync(new URL('../../src/components/support/use-support-actions.ts', import.meta.url), 'utf8');
+  const start = source.indexOf('  const submitTicket = useCallback');
+  const end = source.indexOf('  const sendMessage = useCallback', start);
+  assert.ok(start >= 0 && end > start);
+  const submit = source.slice(start, end);
+  assert.match(submit, /\.from\("support_tickets"\)/u);
+  assert.match(submit, /let messageConfirmed = false/u);
+  assert.match(submit, /Ticket created; initial chat message unconfirmed/u);
+  assert.match(submit, /Promise\.allSettled/u,
+    'Error de refresco no puede disfrazar un ticket ya persistido');
+  assert.match(submit, /Revisa el ticket antes de intentar otro/u);
+  assert.match(submit, /No se guardó ninguna salida/u);
+  assert.doesNotMatch(submit, /\.from\("attendance_logs"\)/u);
 });
 
 test('GAP-PKG-004: geocerca fuera de sede bloquea insercion de entrada', async () => {
