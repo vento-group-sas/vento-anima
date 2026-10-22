@@ -2230,7 +2230,7 @@ export function useAttendance() {
           "La ubicación no pudo verificarse. Tu turno continúa abierto y no se ha creado ninguna salida. Puedes revisar los permisos o solicitar atención administrativa desde Soporte.",
           [
             { text: "Revisar ubicación", style: "cancel" },
-            { text: "Abrir soporte", onPress: () => router.push("/support") },
+            { text: "Solicitar revisión", onPress: () => router.push({ pathname: "/support", params: { intent: "checkout_review" } }) },
           ],
         )
         return { success: false, error: geo.message || "Ubicación no verificada. Solicita revisión desde Soporte." }
