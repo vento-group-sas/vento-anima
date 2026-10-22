@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import * as Haptics from "expo-haptics"
 import * as Location from "expo-location"
+import { router } from "expo-router"
 import { Alert, AppState, Linking, Platform } from "react-native"
 
 import {
@@ -2224,7 +2225,15 @@ export function useAttendance() {
 
       if (!geo.canProceed) {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
-        return { success: false, error: geo.message || "Ubicación no verificada" }
+        Alert.alert(
+          "Salida pendiente de revisión",
+          "La ubicación no pudo verificarse. Tu turno continúa abierto y no se ha creado ninguna salida. Puedes revisar los permisos o solicitar atención administrativa desde Soporte.",
+          [
+            { text: "Revisar ubicación", style: "cancel" },
+            { text: "Abrir soporte", onPress: () => router.push("/support") },
+          ],
+        )
+        return { success: false, error: geo.message || "Ubicación no verificada. Solicita revisión desde Soporte." }
       }
 
       const location = geo.location
