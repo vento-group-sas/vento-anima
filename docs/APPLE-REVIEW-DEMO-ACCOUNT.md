@@ -11,10 +11,10 @@ En **App Store Connect** → tu app **ANIMA** → **Información de la app** →
 | Campo     | Valor                  |
 |----------|-------------------------|
 | **Usuario** | `test@ventogroup.com` |
-| **Contraseña** | `TestPass123`     |
+| **Contraseña** | `[credencial privada]`     |
 
 - Escribe exactamente así (minúsculas, sin espacios).
-- La app usa esta misma contraseña internamente cuando el revisor escribe ese email, así que aunque Apple copie mal la contraseña, el login seguirá funcionando.
+- El revisor debe introducir su contrasena vigente; la app no almacena ni reemplaza contrasenas.
 
 ---
 
@@ -29,11 +29,11 @@ La cuenta debe existir en **Supabase Auth** y tener datos en **employees** y **e
 3. Si no existe:
    - **Add user** → **Create new user**
    - Email: `test@ventogroup.com`
-   - Password: `TestPass123`
+   - Password: `[credencial privada]`
    - Marcar **Auto Confirm User**.
    - Crear.
 
-4. Si ya existe pero no recuerdas la contraseña: **Edit user** y cambia la contraseña a `TestPass123`.
+4. Si ya existe pero no recuerdas la contraseña: **Edit user** y cambia la contraseña a `[credencial privada]`.
 
 ### 2.2 Datos de empleado y sitios
 
@@ -64,26 +64,21 @@ Así la cuenta de revisión puede hacer check-in y check-out desde cualquier par
 
 ---
 
-## 3. Build de producción (EAS)
+## 3. Build de produccion (EAS)
 
-Las variables de revisión deben estar en el build que envías a Apple:
+No incluir contrasenas de revision en variables EXPO_PUBLIC_, EAS ni codigo cliente.
 
-- En **eas.json** el perfil `production` ya incluye:
-  - `EXPO_PUBLIC_REVIEW_EMAILS=test@ventogroup.com`
-  - `EXPO_PUBLIC_REVIEW_PASSWORD=TestPass123`
-- Así, al hacer login con `test@ventogroup.com`, la app usará siempre `TestPass123` aunque el revisor escriba otra cosa en el campo contraseña.
+Configurar la credencial vigente en Supabase Auth y proporcionarla por los canales privados de App Store Connect o Google Play Console.
 
-Si prefieres no tener la contraseña en el repo, puedes definir **EAS Secrets** con los mismos nombres; EAS los inyectará en el build y sobrescribirán los de `eas.json`.
-
----
+La aplicacion no sustituye automaticamente la contrasena introducida.
 
 ## 4. Checklist antes de enviar a revisión
 
-- [ ] En App Store Connect: Usuario `test@ventogroup.com`, Contraseña `TestPass123`.
-- [ ] En Supabase Auth: existe el usuario `test@ventogroup.com` con contraseña `TestPass123` y está confirmado.
+- [ ] En App Store Connect: Usuario `test@ventogroup.com`, Contraseña `[credencial privada]`.
+- [ ] En Supabase Auth: existe el usuario `test@ventogroup.com` con contraseña `[credencial privada]` y está confirmado.
 - [ ] Ejecutado `2026-01-28_create_test_account.sql` (existe fila en `employees` y `employee_sites` para ese usuario).
-- [ ] Build de producción generado con las env de revisión (eas.json o EAS Secrets).
-- [ ] Probado localmente: login con `test@ventogroup.com` / `TestPass123`, entrar a Home, check-in, documentos, soporte, etc.
+- [ ] Build sin contrasenas embebidas en variables EXPO_PUBLIC_.
+- [ ] Probado localmente: login con `test@ventogroup.com` / `[credencial privada]`, entrar a Home, check-in, documentos, soporte, etc.
 
 ---
 
@@ -93,7 +88,7 @@ En la respuesta a Apple (Resolution Center), puedes incluir algo como:
 
 > The demo account is:
 > Username: test@ventogroup.com  
-> Password: TestPass123  
+> Password: [credencial privada]  
 >
 > Please enter the username exactly as above (all lowercase). The app will accept this password for the review account. If you still cannot log in, please confirm you are using a stable internet connection and the latest build; we have verified this account successfully on our side.
 
@@ -105,14 +100,9 @@ Y comprobar de nuevo en Supabase que el usuario existe, está confirmado, y que 
 
 Si ya tienes la cuenta en Auth, en employees, en employee_sites y las credenciales en App Store Connect, las causas más probables son:
 
-### 6.1 Build antiguo (la más común)
+### 6.1 Build antiguo o credenciales desactualizadas
 
-Si el build que Apple está probando se generó **antes** de añadir la lógica de “contraseña de revisión automática” y las env en `eas.json`, el login sigue dependiendo de que copien la contraseña exacta. Cualquier error al copiar (espacio, carácter raro) hace que falle.
-
-**Qué hacer:**
-1. Genera un **nuevo build de producción** con EAS (asegurándote de que el código actual con la contraseña de revisión y las env está en el build).
-2. Súbelo a App Store Connect y **envía de nuevo a revisión** con ese build.
-3. En el Resolution Center escribe que han de usar **el último build** y que la app ya está actualizada para que la cuenta demo funcione correctamente.
+Comprobar que Apple utiliza el build vigente y que la contrasena facilitada en App Store Connect coincide con la actual en Supabase Auth.
 
 ### 6.2 RLS (Row Level Security) en Supabase
 
@@ -125,14 +115,9 @@ Si en las tablas `employees` y `employee_sites` está activado RLS y no hay una 
 
 Sin estas políticas, el usuario de revisión no verá su empleado ni sus sitios aunque las filas existan.
 
-### 6.3 Contraseña en Auth no coincide
+### 6.3 Contrasena en Auth no coincide
 
-La contraseña guardada en Supabase Auth para `test@ventogroup.com` puede haberse cambiado en algún momento y no ser exactamente `TestPass123`.
-
-**Qué hacer:**
-1. Supabase → **Authentication** → **Users** → usuario `test@ventogroup.com`.
-2. **Edit user** → en **Password** pon exactamente `TestPass123` (T y P mayúsculas, sin espacios).
-3. Guarda y vuelve a probar el login en la app.
+Restablecer la credencial de la cuenta de revision en Supabase Auth y actualizarla en el canal privado de App Store Connect. Nunca publicar ese valor en el repositorio.
 
 ### 6.4 Mensaje genérico de Apple
 
@@ -154,7 +139,7 @@ We have updated the app and the demo account so that reviewers can access all fe
 
 Demo account (please use exactly as shown):
 • Username: test@ventogroup.com (all lowercase, no spaces)
-• Password: TestPass123 (capital T and P, no spaces)
+• Password: [credencial privada] (provided privately in App Store Connect)
 
 Steps:
 1. Open the app and wait for the login screen.

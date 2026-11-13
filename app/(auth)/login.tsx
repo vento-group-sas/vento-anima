@@ -21,7 +21,6 @@ import Animated, {
 import { COLORS } from "@/constants/colors";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/auth-context";
-import { getReviewPassword, shouldUseReviewPassword } from "@/utils/auth";
 import { getUserFacingAuthError } from "@/utils/error-messages";
 import LoginBackground from "@/components/auth/login/LoginBackground";
 import LoginHeader from "@/components/auth/login/LoginHeader";
@@ -155,12 +154,7 @@ export default function LoginScreen() {
     setErrorMsg(null);
 
     try {
-      // Cuenta de revisión (Apple/Google): usar siempre la contraseña de demo para que
-      // los revisores accedan aunque la copien mal desde App Store Connect.
-      const effectivePassword = shouldUseReviewPassword(trimmedEmail)
-        ? getReviewPassword() || password
-        : password;
-      await signIn(trimmedEmail, effectivePassword);
+      await signIn(trimmedEmail, password);
     } catch (e: any) {
       const cooldown = getRateLimitCooldownSeconds(e);
       if (cooldown > 0) {
