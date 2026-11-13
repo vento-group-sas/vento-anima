@@ -175,7 +175,7 @@ test('REG-02 cero tests jamás se normaliza a PASS', () => {
 
 test('REG-03 evidencia de otro consumidor no satisface ANIMA', () => {
   const evidence = validEvidence();
-  evidence.consumer_repository = 'devVentoGroup/vento-viso';
+  evidence.consumer_repository = 'vento-group-sas/vento-viso';
   assert.ok(validateEvidence(evidence).includes('WRONG_CONSUMER_REPOSITORY'));
 });
 

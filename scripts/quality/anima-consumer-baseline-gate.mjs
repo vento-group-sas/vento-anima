@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url';
 export const CI013_INSTANCE_ID = 'SHELL-CI-013::GLOBAL';
 export const CI013_SCHEMA_VERSION = 1;
 export const CI013_SOURCE_CONTRACT_SHA256 = '7a0192a54a053fb4259d3722238778b6367047a14c65fe48903666240602b667';
-export const CONSUMER_REPOSITORY = 'devVentoGroup/vento-anima';
+export const CONSUMER_REPOSITORY = 'vento-group-sas/vento-anima';
 export const CONSUMER_NAME = 'anima';
 export const RENDERER = 'NATIVE_REACT_NATIVE_EXPO';
 export const TOOLCHAIN_MODE = 'BASELINE_CURRENT_NOT_FUTURE_TARGET';
