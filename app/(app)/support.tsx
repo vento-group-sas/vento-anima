@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useLocalSearchParams } from "expo-router";
 import {
   ActivityIndicator,
   Alert,
@@ -117,6 +118,8 @@ const MANAGEMENT_ROLES = new Set(["propietario", "gerente_general", "gerente"]);
 export default function SupportScreen() {
   const insets = useSafeAreaInsets();
   const { user, employee, selectedSiteId } = useAuth();
+  const { intent } = useLocalSearchParams<{ intent?: string }>();
+  const checkoutReviewPreparedRef = useRef(false);
   const role = employee?.role ?? null;
   const canContactWorker = Boolean(role && MANAGEMENT_ROLES.has(role));
   const managerSiteId = role === "gerente" ? (employee?.siteId ?? selectedSiteId ?? null) : null;
@@ -176,6 +179,21 @@ export default function SupportScreen() {
     loadMessages,
     setSelectedTicketId,
   });
+
+  useEffect(() => {
+    if (intent !== "checkout_review" || checkoutReviewPreparedRef.current) return;
+    checkoutReviewPreparedRef.current = true;
+    setTicketTitle("Revisión de salida sin ubicación");
+    setTicketMessage([
+      "No pude verificar mi ubicación al intentar registrar la salida de mi turno.",
+      "ANIMA no registró ni encoló una salida; mi turno continúa abierto.",
+      "Solicito revisión administrativa. Este ticket no modifica la asistencia.",
+      "Hora local del intento: " + new Date().toLocaleString("es-CO"),
+      "Por favor verifiquen identidad, sede, turno y asistencia antes de cualquier ajuste.",
+    ].join("\n\n"));
+    setIsTicketOpen(true);
+  }, [intent, setIsTicketOpen, setTicketMessage, setTicketTitle]);
+
   return (
     <View style={styles.root}>
       <ScrollView
@@ -211,6 +229,18 @@ export default function SupportScreen() {
         />
 
         <View style={{ marginTop: 18, gap: 12 }}>
+          {intent === "checkout_review" || selectedTicket?.title === "Revisión de salida sin ubicación" ? (
+            <View style={[SUPPORT_UI.card, { padding: 14 }]}>
+              <Text style={{ color: COLORS.accent, fontWeight: "800" }}>
+                Revisión administrativa de salida
+              </Text>
+              <Text style={{ color: COLORS.text, marginTop: 6 }}>
+                El ticket abre una solicitud de revisión; no registra una salida ni cierra tu turno.
+                Solo un responsable puede revisar el caso conforme al procedimiento autorizado.
+              </Text>
+            </View>
+          ) : null}
+
           <SupportTicketsSection
             tickets={tickets}
             isLoadingTickets={isLoadingTickets}

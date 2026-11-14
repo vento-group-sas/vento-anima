@@ -1,7 +1,8 @@
 /**
  * Página web para crear/restablecer contraseña (ANIMA).
- * Supabase redirige aquí tras "¿Olvidaste tu contraseña?".
- * No depende de la app: el usuario pone la contraseña en el navegador.
+ * Modo invite: completa invitación laboral con staff-invitations-accept.
+ * Modo recovery: recupera contraseña sin modificar permisos laborales.
+ * No requiere instalar ni abrir la app en el dispositivo.
  *
  * Vercel: configurar SUPABASE_URL y SUPABASE_ANON_KEY en el proyecto.
  * Redirect URL en Supabase: https://tu-dominio.vercel.app/api/set-password
@@ -39,12 +40,16 @@ const getHtml = (supabaseUrl, supabaseAnonKey) => `<!DOCTYPE html>
     </div>
     <div id="stateInvalid" class="hidden">
       <h1>Enlace no válido</h1>
-      <p class="sub">Este enlace ya se usó o venció. Abre la app ANIMA y vuelve a tocar «¿Olvidaste tu contraseña?».</p>
+      <p class="sub">Este enlace ya se usó o venció. Solicita uno nuevo desde ANIMA o a quien te invitó.</p>
     </div>
     <div id="stateForm" class="hidden">
-      <h1>Crear contraseña</h1>
-      <p class="sub">Elige una contraseña para entrar a ANIMA (mínimo 8 caracteres).</p>
+      <h1 id="formTitle">Crear contraseña</h1>
+      <p class="sub" id="formDescription">Elige una contraseña para entrar a ANIMA (mínimo 8 caracteres).</p>
       <form id="form">
+        <div id="inviteNameField" class="hidden">
+          <label for="fullName">Nombre completo</label>
+          <input id="fullName" name="fullName" type="text" autocomplete="name" maxlength="160" />
+        </div>
         <label for="password">Nueva contraseña</label>
         <input type="password" id="password" name="password" minlength="8" placeholder="Mínimo 8 caracteres" required />
         <label for="confirm">Confirmar contraseña</label>
@@ -54,7 +59,7 @@ const getHtml = (supabaseUrl, supabaseAnonKey) => `<!DOCTYPE html>
     </div>
     <div id="stateDone" class="hidden">
       <h1>Listo</h1>
-      <p class="sub">Ya puedes cerrar esta página e iniciar sesión en la app ANIMA con tu correo y la contraseña que acabas de crear.</p>
+      <p class="sub" id="doneDescription">Ya puedes cerrar esta página e iniciar sesión en la app ANIMA con tu correo y la contraseña que acabas de crear.</p>
     </div>
     <div id="msg" class="msg" role="alert"></div>
   </div>
@@ -74,6 +79,7 @@ const getHtml = (supabaseUrl, supabaseAnonKey) => `<!DOCTYPE html>
       var code = queryParams.get("code");
       var tokenHash = queryParams.get("token_hash") || hashParams.get("token_hash");
       var verifyType = queryParams.get("type") || hashParams.get("type") || "recovery";
+      var isInvitation = verifyType === "invite";
 
       var stateLoading = document.getElementById("stateLoading");
       var stateInvalid = document.getElementById("stateInvalid");
@@ -82,12 +88,26 @@ const getHtml = (supabaseUrl, supabaseAnonKey) => `<!DOCTYPE html>
       var msg = document.getElementById("msg");
       var form = document.getElementById("form");
       var btn = document.getElementById("btn");
+      var fullNameInput = document.getElementById("fullName");
+
+      // Las invitaciones emitidas desde ANIMA movil y VISO web comparten Edge.
+      // El navegador nunca decide el rol ni la sede del trabajador.
+      if (isInvitation) {
+        document.getElementById("formTitle").textContent = "Completa tu invitación";
+        document.getElementById("formDescription").textContent =
+          "Indica tu nombre y crea una contraseña. Tu acceso laboral se activará cuando se confirme tu invitación.";
+        document.getElementById("inviteNameField").classList.remove("hidden");
+        fullNameInput.required = true;
+        document.getElementById("doneDescription").textContent =
+          "Tu invitación fue aceptada y tu acceso laboral quedó activado. Ya puedes iniciar sesión en ANIMA.";
+      }
 
       function showState(id) {
         [stateLoading, stateInvalid, stateForm, stateDone].forEach(function(el) { el.classList.add("hidden"); });
         document.getElementById(id).classList.remove("hidden");
         msg.className = "msg";
         msg.textContent = "";
+        msg.style.display = "none";
       }
       function showError(text) {
         msg.className = "msg error";
@@ -95,7 +115,8 @@ const getHtml = (supabaseUrl, supabaseAnonKey) => `<!DOCTYPE html>
         msg.style.display = "block";
       }
 
-      if (!window.SUPABASE_URL || !window.SUPABASE_ANON_KEY) {
+      if (!window.SUPABASE_URL || !window.SUPABASE_ANON_KEY ||
+          (verifyType !== "invite" && verifyType !== "recovery")) {
         showState("stateInvalid");
         return;
       }
@@ -128,14 +149,41 @@ const getHtml = (supabaseUrl, supabaseAnonKey) => `<!DOCTYPE html>
       }
 
       function ensureSession() {
-        if (sessionReady) {
-          return Promise.resolve();
-        }
+        if (sessionReady) return Promise.resolve();
         return establishSession().then(function(res) {
-          if (res && res.error) {
-            throw res.error;
+          if (res && res.error) throw res.error;
+          return supabase.auth.getSession();
+        }).then(function(res) {
+          if (res && res.error) throw res.error;
+          if (!res || !res.data || !res.data.session || !res.data.session.access_token) {
+            throw new Error("El enlace no estableció una sesión válida.");
           }
           sessionReady = true;
+        });
+      }
+
+      function acceptStaffInvitation(password, fullName) {
+        // La Edge autoriza al usuario a partir de su sesion Auth y consulta
+        // rol/sede del registro canonico. Nunca enviar service_role al navegador.
+        return supabase.functions.invoke("staff-invitations-accept", {
+          body: { password: password, full_name: fullName }
+        }).then(async function(res) {
+          if (res && res.error) {
+            var detail = "No se pudo activar el acceso laboral.";
+            var context = res.error.context;
+            if (context && typeof context.clone === "function") {
+              try {
+                var payload = await context.clone().json();
+                if (payload && typeof payload.error === "string") detail = payload.error;
+              } catch (_) {
+                // Una respuesta no JSON nunca autoriza mostrar exito.
+              }
+            }
+            throw new Error(detail);
+          }
+          if (!res || !res.data || res.data.error || !res.data.user_id) {
+            throw new Error("La invitación no quedó confirmada.");
+          }
         });
       }
 
@@ -155,22 +203,38 @@ const getHtml = (supabaseUrl, supabaseAnonKey) => `<!DOCTYPE html>
           showError("Las contraseñas no coinciden.");
           return;
         }
+        var fullName = isInvitation ? fullNameInput.value.trim() : "";
+        if (isInvitation && fullName.length < 2) {
+          showError("Indica tu nombre completo para aceptar la invitación.");
+          return;
+        }
         btn.disabled = true;
         ensureSession()
           .then(function() {
-            return supabase.auth.updateUser({ password: pwd });
-          })
-          .then(function(res) {
-            if (res && res.error) {
-              throw res.error;
+            if (isInvitation) {
+              // Solo la Edge puede guardar las credenciales y activar el
+              // empleo en PostgreSQL. Auth por si solo no equivale a exito.
+              return acceptStaffInvitation(pwd, fullName);
             }
+            return supabase.auth.updateUser({ password: pwd }).then(function(res) {
+              if (res && res.error) throw res.error;
+            });
+          })
+          .then(function() {
             showState("stateDone");
           })
           .catch(function(err) {
             btn.disabled = false;
             var raw = (err && err.message ? String(err.message) : "").toLowerCase();
-            if (raw.includes("expired") || raw.includes("invalid")) {
+            if (raw.includes("expired") || raw.includes("invalid") ||
+                raw.includes("no longer available") ||
+                raw.includes("valid invitation required")) {
               showState("stateInvalid");
+              return;
+            }
+            if (isInvitation) {
+              showError("La invitación no se pudo completar. Reintenta sin cerrar esta página. " +
+                (raw.includes("activation failed") ? "El acceso laboral no está activo." : ""));
               return;
             }
             showError(err.message || "No se pudo guardar la contraseña.");

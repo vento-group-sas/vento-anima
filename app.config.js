@@ -17,8 +17,8 @@ module.exports = () => {
     [
       "expo-location",
       {
-        locationAlwaysAndWhenInUsePermission: "ANIMA usa tu ubicacion durante un turno activo para validar asistencia y registrar salida de sede.",
-        locationWhenInUsePermission: "ANIMA usa tu ubicacion para validar asistencia en la sede.",
+        locationWhenInUsePermission: "ANIMA necesita ubicacion precisa para verificar entradas y salidas en la sede.",
+        locationAlwaysAndWhenInUsePermission: "ANIMA necesita ubicacion precisa en segundo plano mientras tu turno esta abierto, para verificar la sede y avisar de posibles salidas. Detiene el seguimiento al finalizar el turno.",
         isIosBackgroundLocationEnabled: true,
         isAndroidBackgroundLocationEnabled: true,
         isAndroidForegroundServiceEnabled: true
@@ -58,8 +58,8 @@ module.exports = () => {
         bundleIdentifier: selectedVariant.iosBundleId,
         buildNumber: "15",
         infoPlist: {
-          NSLocationWhenInUseUsageDescription: "Necesitamos tu ubicacion para validar el check-in.",
-          NSLocationAlwaysAndWhenInUseUsageDescription: "Necesitamos validar tu ubicacion durante un turno activo, incluso si la aplicacion esta en segundo plano.",
+          NSLocationWhenInUseUsageDescription: "ANIMA necesita ubicacion precisa para verificar entrada y salida en la sede.",
+          NSLocationAlwaysAndWhenInUseUsageDescription: "ANIMA usa ubicacion precisa en segundo plano solo durante un turno abierto para controlar la geocerca y alertar de salidas. El seguimiento termina al registrar salida.",
           UIBackgroundModes: ["location"],
           ITSAppUsesNonExemptEncryption: false
         }

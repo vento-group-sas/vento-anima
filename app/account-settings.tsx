@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Linking,
+  Platform,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -21,6 +22,10 @@ import * as Notifications from "expo-notifications";
 import { COLORS } from "@/constants/colors";
 import { useAuth } from "@/contexts/auth-context";
 import { useAccountDeletion } from "@/hooks/useAccountDeletion";
+import {
+  ensureAttendanceBackgroundLocationPermission,
+  startAttendanceBackgroundLocation,
+} from "@/hooks/attendance/background-location-task";
 import { DataCleanupFlow } from "@/components/settings/DataCleanupFlow";
 import { DeleteAccountFlow } from "@/components/settings/DeleteAccountFlow";
 import { ANIMA_COPY } from "@/brand/anima/copy/app-copy";
@@ -98,11 +103,14 @@ export default function AccountSettingsScreen() {
   const [activeSection, setActiveSection] = useState<SettingsSection>("permissions");
   const [notificationStatus, setNotificationStatus] = useState<PermissionState>("unknown");
   const [locationStatus, setLocationStatus] = useState<PermissionState>("unknown");
+  const [backgroundLocationStatus, setBackgroundLocationStatus] = useState<PermissionState>("unknown");
   const [notificationCanAskAgain, setNotificationCanAskAgain] = useState<boolean | null>(null);
   const [locationCanAskAgain, setLocationCanAskAgain] = useState<boolean | null>(null);
+  const [backgroundCanAskAgain, setBackgroundCanAskAgain] = useState<boolean | null>(null);
   const [loadingPermissions, setLoadingPermissions] = useState(false);
   const [requestingNotifications, setRequestingNotifications] = useState(false);
   const [requestingLocation, setRequestingLocation] = useState(false);
+  const [requestingBackgroundLocation, setRequestingBackgroundLocation] = useState(false);
 
   const {
     loadingStatus,
@@ -117,12 +125,19 @@ export default function AccountSettingsScreen() {
   const refreshPermissions = useCallback(async () => {
     setLoadingPermissions(true);
     try {
-      const [notificationsPermission, locationPermission] = await Promise.all([
+      const [notificationsPermission, locationPermission, backgroundPermission] = await Promise.all([
         Notifications.getPermissionsAsync(),
         Location.getForegroundPermissionsAsync(),
+        Location.getBackgroundPermissionsAsync(),
       ]);
       setNotificationStatus(normalizePermissionStatus(notificationsPermission.status));
       setLocationStatus(normalizePermissionStatus(locationPermission.status));
+      setBackgroundLocationStatus(normalizePermissionStatus(backgroundPermission.status));
+      setBackgroundCanAskAgain(
+        typeof backgroundPermission.canAskAgain === "boolean"
+          ? backgroundPermission.canAskAgain
+          : null,
+      );
       setNotificationCanAskAgain(
         typeof notificationsPermission.canAskAgain === "boolean"
           ? notificationsPermission.canAskAgain
@@ -137,8 +152,10 @@ export default function AccountSettingsScreen() {
       console.warn("[SETTINGS] Error loading permission status:", err);
       setNotificationStatus("unknown");
       setLocationStatus("unknown");
+      setBackgroundLocationStatus("unknown");
       setNotificationCanAskAgain(null);
       setLocationCanAskAgain(null);
+      setBackgroundCanAskAgain(null);
     } finally {
       setLoadingPermissions(false);
     }
@@ -251,7 +268,18 @@ export default function AccountSettingsScreen() {
         typeof current.canAskAgain === "boolean" ? current.canAskAgain : null;
 
       if (currentStatus === "granted") {
-        Alert.alert("Ubicación", "La ubicación ya está activa.");
+        if (Platform.OS === "android" && current.android?.accuracy !== "fine") {
+          Alert.alert(
+            "Ubicación aproximada",
+            "El permiso está activo, pero para iniciar un turno se necesita ubicación precisa. Activa «Usar ubicación precisa» en los ajustes de ANIMA.",
+            [
+              { text: "Ahora no", style: "cancel" },
+              { text: "Abrir ajustes", onPress: () => void openSystemSettings() },
+            ],
+          );
+          return;
+        }
+        Alert.alert("Ubicación", "Permiso concedido. El seguimiento continuo solo se usa con un turno abierto.");
         return;
       }
 
@@ -273,7 +301,18 @@ export default function AccountSettingsScreen() {
         typeof asked.canAskAgain === "boolean" ? asked.canAskAgain : null;
 
       if (askedStatus === "granted") {
-        Alert.alert("Ubicación activada", "Ya puedes validar asistencia con GPS.");
+        if (Platform.OS === "android" && asked.android?.accuracy !== "fine") {
+          Alert.alert(
+            "Falta ubicación precisa",
+            "ANIMA solo tiene ubicación aproximada. Selecciona Precisa en los ajustes antes de registrar entrada.",
+            [
+              { text: "Ahora no", style: "cancel" },
+              { text: "Abrir ajustes", onPress: () => void openSystemSettings() },
+            ],
+          );
+        } else {
+          Alert.alert("Ubicación activada", "Permiso concedido. El seguimiento continuo solo ocurre durante el turno.");
+        }
       } else if (askedStatus === "denied") {
         if (askedCanAskAgain === false) {
           Alert.alert(
@@ -297,6 +336,54 @@ export default function AccountSettingsScreen() {
       await refreshPermissions();
       setRequestingLocation(false);
     }
+  }, [openSystemSettings, refreshPermissions]);
+
+  const requestBackgroundLocationPermission = useCallback(() => {
+    Alert.alert(
+      "Ubicacion durante el turno",
+      "Para registrar una nueva entrada necesitas GPS preciso y acceso a ubicacion en segundo plano. Tras confirmar el turno, ANIMA puede seguir la ubicacion durante la jornada para detectar salidas de sede; se detiene al registrar la salida y nunca hace checkout automatico. Puedes negar el permiso, pero no registrar una nueva entrada hasta autorizarlo.",
+      [
+        { text: "Ahora no", style: "cancel" },
+        {
+          text: "Configurar ubicacion del turno",
+          onPress: () => {
+            void (async () => {
+              setRequestingBackgroundLocation(true);
+              try {
+                const granted = await ensureAttendanceBackgroundLocationPermission({ request: true });
+                if (!granted) {
+                  Alert.alert(
+                    "Permiso de turno sin activar",
+                    "No se registraran nuevas entradas sin permiso preciso y de segundo plano. Los turnos ya abiertos conservan la opcion de cierre manual autorizado; la denegacion nunca genera un cierre automatico.",
+                    [
+                      { text: "Cerrar", style: "cancel" },
+                      { text: "Abrir ajustes", onPress: () => void openSystemSettings() },
+                    ],
+                  );
+                  return;
+                }
+                const started = await startAttendanceBackgroundLocation();
+                Alert.alert(
+                  "Ubicacion de turno",
+                  started
+                    ? "El seguimiento está activo durante el turno y se detendrá al registrar la salida."
+                    : "El permiso esta preparado para registrar una nueva entrada. El seguimiento solo se iniciara cuando el servidor confirme un turno abierto.",
+                );
+              } catch (err) {
+                console.warn("[SETTINGS] No se pudo preparar ubicacion de turno:", err);
+                Alert.alert(
+                  "Ubicacion de turno no disponible",
+                  "No se pudo activar el permiso. Una nueva entrada seguira bloqueada hasta autorizarlo; esto no revierte una salida confirmada ni habilita autocierre.",
+                );
+              } finally {
+                await refreshPermissions();
+                setRequestingBackgroundLocation(false);
+              }
+            })();
+          },
+        },
+      ],
+    );
   }, [openSystemSettings, refreshPermissions]);
 
   const canOpenAnimaDiagnostics = canAccessAnimaDiagnostics(user?.email);
@@ -327,6 +414,7 @@ export default function AccountSettingsScreen() {
     notificationCanAskAgain,
   );
   const locationMeta = permissionMeta(locationStatus, locationCanAskAgain);
+  const backgroundLocationMeta = permissionMeta(backgroundLocationStatus, backgroundCanAskAgain);
 
   const sectionContent = useMemo(() => {
     if (!session) return null;
@@ -419,6 +507,45 @@ export default function AccountSettingsScreen() {
             </TouchableOpacity>
           </View>
 
+          <View style={styles.cardBase}>
+            <View style={styles.cardHeaderRow}>
+              <View style={styles.cardTitleWrap}>
+                <Text style={styles.cardTitle}>Ubicacion de turno requerida para entrar</Text>
+                <Text style={styles.cardText}>
+                  Para iniciar un turno necesitas GPS preciso y autorizacion de segundo plano. El seguimiento solo funciona con el turno confirmado; termina al salir. Rechazar este permiso bloquea nuevas entradas, pero no provoca un cierre automatico ni invalida una salida registrada.
+                </Text>
+              </View>
+              <View
+                style={[
+                  styles.statusPill,
+                  {
+                    backgroundColor: backgroundLocationMeta.backgroundColor,
+                    borderColor: backgroundLocationMeta.borderColor,
+                  },
+                ]}
+              >
+                <Text style={[styles.statusPillText, { color: backgroundLocationMeta.color }]}>
+                  {backgroundLocationMeta.label}
+                </Text>
+              </View>
+            </View>
+            <TouchableOpacity
+              style={[styles.primaryAction, requestingBackgroundLocation && styles.disabledAction]}
+              disabled={requestingBackgroundLocation}
+              onPress={requestBackgroundLocationPermission}
+            >
+              {requestingBackgroundLocation ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.primaryActionText}>
+                  {backgroundLocationStatus === "granted"
+                    ? "Verificar ubicacion de turno"
+                    : "Autorizar ubicacion de turno"}
+                </Text>
+              )}
+            </TouchableOpacity>
+          </View>
+
           <TouchableOpacity style={styles.secondaryAction} onPress={openSystemSettings}>
             <Ionicons name="settings-outline" size={16} color={COLORS.text} />
             <Text style={styles.secondaryActionText}>Abrir ajustes del sistema</Text>
@@ -495,6 +622,11 @@ export default function AccountSettingsScreen() {
     );
   }, [
     activeSection,
+    backgroundLocationMeta.backgroundColor,
+    backgroundLocationMeta.borderColor,
+    backgroundLocationMeta.color,
+    backgroundLocationMeta.label,
+    backgroundLocationStatus,
     canOpenAnimaDiagnostics,
     cancelFullDeletion,
     handleSignOut,
@@ -515,9 +647,11 @@ export default function AccountSettingsScreen() {
     pendingRequest,
     requestDataCleanup,
     requestFullDeletion,
+    requestBackgroundLocationPermission,
     requestLocationPermission,
     requestNotificationPermission,
     locationCanAskAgain,
+    requestingBackgroundLocation,
     requestingLocation,
     requestingNotifications,
     session,

@@ -22,7 +22,8 @@ const DEFAULT_POLICY: ShiftPolicy = {
   endReminderMinutesBeforeEnd: 5,
   autoCheckoutGraceMinutesAfterEnd: 30,
   endReminderEnabled: true,
-  scheduledAutoCheckoutEnabled: true,
+  // El procesador no ejecuta cierres por horario, incluso si la columna legada está activa.
+  scheduledAutoCheckoutEnabled: false,
 }
 
 export function useShiftPolicy() {
@@ -60,9 +61,8 @@ export function useShiftPolicy() {
             DEFAULT_POLICY.autoCheckoutGraceMinutesAfterEnd,
           endReminderEnabled:
             data.end_reminder_enabled ?? DEFAULT_POLICY.endReminderEnabled,
-          scheduledAutoCheckoutEnabled:
-            data.scheduled_auto_checkout_enabled ??
-            DEFAULT_POLICY.scheduledAutoCheckoutEnabled,
+          // Reflejar la capacidad real del runtime, no la bandera heredada de BD.
+          scheduledAutoCheckoutEnabled: false,
         })
       } else {
         setPolicy(DEFAULT_POLICY)
